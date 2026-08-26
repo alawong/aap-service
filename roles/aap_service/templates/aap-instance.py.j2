@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+# {{ ansible_managed }}
+{% set aap_instance_config = {
+  'service': 'aap-instance-' + aap_instance_component,
+  'instance_hostname': aap_instance_hostname,
+  'hostname': aap_hostname,
+  'ready_timeout_seconds': aap_instance_ready_timeout_seconds,
+  'ready_poll_seconds': aap_instance_ready_poll_seconds,
+} %}
+
+import json
+import logging
+import os
+import ssl
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+_CONFIG = json.loads("""{{ aap_instance_config | to_json }}""")
+SERVICE_NAME = _CONFIG["service"]
+TOKEN_CREDENTIAL_NAME = "aap_token"
+INSTANCE_HOSTNAME = _CONFIG["instance_hostname"]
+AAP_HOSTNAME = _CONFIG["hostname"]
+ENCRYPTED_CREDENTIAL_PATH = "/etc/credstore.encrypted/aap_token"
+VALIDATE_CERTS = {{ 'True' if aap_validate_certs | bool else 'False' }}
+READY_TIMEOUT = _CONFIG["ready_timeout_seconds"]
+READY_POLL = _CONFIG["ready_poll_seconds"]
+READY_NODE_STATE = "ready"
+FAIL_NODE_STATES = ("unavailable", "provision-fail", "deprovision-fail")
+LOG = logging.getLogger(SERVICE_NAME)
+VALID_ACTIONS = ("start", "stop")
+
+
+def setup_logging():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+
+def parse_action():
+    if len(sys.argv) != 2 or sys.argv[1] not in VALID_ACTIONS:
+        print("Usage: %s start|stop" % sys.argv[0], file=sys.stderr)
+        sys.exit(2)
+    return sys.argv[1]
+
+
+def read_token():
+    cred_dir = os.environ.get("CREDENTIALS_DIRECTORY")
+
+    if cred_dir:
+        cred_path = os.path.join(cred_dir, TOKEN_CREDENTIAL_NAME)
+        if os.path.isfile(cred_path):
+            with open(cred_path, encoding="utf-8") as handle:
+                return handle.read().strip()
+
+    if os.path.isfile(ENCRYPTED_CREDENTIAL_PATH):
+        try:
+            result = subprocess.run(
+                [
+                    "systemd-creds",
+                    "decrypt",
+                    "--name=" + TOKEN_CREDENTIAL_NAME,
+                    ENCRYPTED_CREDENTIAL_PATH,
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(
+                "Failed to decrypt API token at %s: %s"
+                % (ENCRYPTED_CREDENTIAL_PATH, exc.stderr.strip() or exc)
+            ) from exc
+        return result.stdout.strip()
+
+    raise RuntimeError(
+        "API token not available. Expected credential from LoadCredentialEncrypted "
+        "or encrypted file at %s. Re-run install_aap_service.yml with aap_token set."
+        % ENCRYPTED_CREDENTIAL_PATH
+    )
+
+
+def api_request(method, path, body=None):
+    url = AAP_HOSTNAME.rstrip("/") + path
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + read_token(),
+    }
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    context = None if VALIDATE_CERTS else ssl._create_unverified_context()
+
+    try:
+        with urllib.request.urlopen(request, context=context, timeout=60) as response:
+            payload = response.read().decode("utf-8")
+            return json.loads(payload) if payload else {}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError("%s %s failed (%s): %s" % (method, path, exc.code, detail)) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(
+            "API request to %s failed: %s. "
+            "Check aap_hostname in inventory, that the gateway is running, "
+            "and that this node can reach the gateway (port, TLS, security groups)."
+            % (url, exc.reason)
+        ) from exc
+
+
+def instance_state():
+    query = urllib.parse.urlencode({"hostname": INSTANCE_HOSTNAME})
+    payload = api_request("GET", "/api/controller/v2/instances/?" + query)
+    results = payload.get("results", [])
+
+    if not results:
+        raise RuntimeError("No controller instance found for hostname '%s'" % INSTANCE_HOSTNAME)
+
+    instance = results[0]
+
+    return {
+        "id": int(instance["id"]),
+        "enabled": bool(instance.get("enabled", True)),
+        "node_state": str(instance.get("node_state", "")),
+        "consumed_capacity": float(instance.get("consumed_capacity", 0) or 0),
+        "capacity": float(instance.get("capacity", 0) or 0),
+    }
+
+
+def instance_is_ready(state):
+    return state["enabled"] and state["node_state"] == READY_NODE_STATE
+
+
+def wait_for_instance_ready():
+    deadline = time.time() + READY_TIMEOUT
+    while time.time() < deadline:
+        state = instance_state()
+        node_state = state["node_state"]
+        if node_state in FAIL_NODE_STATES:
+            raise RuntimeError(
+                "Instance %s reported node_state=%s while waiting to become ready"
+                % (INSTANCE_HOSTNAME, node_state)
+            )
+        if instance_is_ready(state):
+            LOG.info(
+                "Instance %s is enabled and ready (node_state=%s, capacity=%s)",
+                INSTANCE_HOSTNAME,
+                node_state,
+                state["capacity"],
+            )
+            return state
+        LOG.info(
+            "Waiting for %s to become ready: enabled=%s node_state=%s",
+            INSTANCE_HOSTNAME,
+            state["enabled"],
+            node_state or "unknown",
+        )
+        time.sleep(READY_POLL)
+
+    state = instance_state()
+    raise RuntimeError(
+        "Timed out after %ss waiting for instance %s to become ready "
+        "(enabled=%s node_state=%s)"
+        % (READY_TIMEOUT, INSTANCE_HOSTNAME, state["enabled"], state["node_state"])
+    )
+
+
+def set_instance_enabled(enabled):
+    state = instance_state()
+
+    if state["enabled"] != enabled:
+        api_request("PATCH", "/api/controller/v2/instances/%s/" % state["id"], {"enabled": enabled})
+
+    if enabled:
+        wait_for_instance_ready()
+        LOG.info("Instance %s enabled in controller", INSTANCE_HOSTNAME)
+    else:
+        LOG.info("Instance %s disabled in controller", INSTANCE_HOSTNAME)
+
+
+def main():
+    setup_logging()
+    action = parse_action()
+
+    if action == "start":
+        set_instance_enabled(True)
+        print("started")
+        return 0
+
+    if action == "stop":
+        set_instance_enabled(False)
+        print("stopped")
+        return 0
+
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

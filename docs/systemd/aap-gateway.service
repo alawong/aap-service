@@ -1,0 +1,16 @@
+# Reference system unit - deployed to /etc/systemd/system/aap-gateway.service
+# Runs as root; script delegates systemctl --user to inventory ansible_user.
+[Unit]
+Description=AAP gateway local lifecycle (container systemd units)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/aap-gateway start
+ExecStop=/usr/local/bin/aap-gateway stop
+TimeoutStopSec=600
+
+[Install]
+WantedBy=multi-user.target

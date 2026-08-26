@@ -1,0 +1,16 @@
+[Unit]
+Description=AAP instance enable/disable (controller mesh, {{ aap_instance_component }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+LoadCredentialEncrypted=aap_token:/etc/credstore.encrypted/aap_token
+PrivateMounts=yes
+ExecStart=/usr/local/bin/aap-instance-{{ aap_instance_component }} start
+ExecStop=/usr/local/bin/aap-instance-{{ aap_instance_component }} stop
+TimeoutStartSec={{ aap_instance_ready_timeout_seconds + 60 }}
+
+[Install]
+WantedBy=multi-user.target

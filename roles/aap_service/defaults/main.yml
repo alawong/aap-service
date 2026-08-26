@@ -1,0 +1,113 @@
+---
+aap_instance_hostname: "{{ routable_hostname | default(inventory_hostname) }}"
+aap_hostname: "{{ gateway_main_url }}"
+aap_validate_certs: true
+
+aap_instance_ready_timeout_seconds: 600
+aap_instance_ready_poll_seconds: 15
+
+aap_instance_group_map:
+  automationcontroller: controller
+  execution_nodes: executionnode
+
+aap_inventory_group_map:
+  automationcontroller: controller
+  automationgateway: gateway
+  automationhub: hub
+  execution_nodes: execution
+  automationeda: eda
+
+aap_node_type: >-
+  {{ 'controller' if 'automationcontroller' in group_names
+     else 'gateway' if 'automationgateway' in group_names
+     else 'hub' if 'automationhub' in group_names
+     else 'execution' if 'execution_nodes' in group_names
+     else 'eda' if 'automationeda' in group_names
+     else '' }}
+
+aap_services:
+  gateway:
+    - automation-gateway
+    - automation-gateway-proxy
+  controller:
+    - postgresql
+    - redis
+    - automation-controller-task
+    - automation-controller-web
+    - automation-controller-rsyslog
+    - receptor
+  execution:
+    - receptor
+  eda:
+    - automation-eda-scheduler
+    - automation-eda-activation-worker-1
+    - automation-eda-activation-worker-2
+    - automation-eda-worker-1
+    - automation-eda-worker-2
+    - automation-eda-web
+    - automation-eda-daphne
+    - automation-eda-api
+  hub:
+    - automation-hub-api
+    - automation-hub-content
+    - automation-hub-web
+    - automation-hub-worker-1
+    - automation-hub-worker-2
+
+aap_stop_services:
+  controller:
+    - automation-controller-task
+    - automation-controller-web
+    - receptor
+    - automation-controller-rsyslog
+    - redis
+    - postgresql
+  eda:
+    - automation-eda-api
+    - automation-eda-daphne
+    - automation-eda-web
+    - automation-eda-worker-1
+    - automation-eda-worker-2
+    - automation-eda-activation-worker-1
+    - automation-eda-activation-worker-2
+    - automation-eda-scheduler
+  hub:
+    - automation-hub-api
+    - automation-hub-content
+    - automation-hub-web
+    - automation-hub-worker-1
+    - automation-hub-worker-2
+
+aap_profiles:
+  gateway:
+    execution_plane: false
+    optional_units: []
+    discover_patterns: []
+  controller:
+    execution_plane: true
+    optional_units:
+      - postgresql
+      - redis
+    discover_patterns: []
+  execution:
+    execution_plane: true
+    optional_units: []
+    discover_patterns: []
+  eda:
+    execution_plane: true
+    optional_units:
+      - automation-eda-worker-1
+      - automation-eda-worker-2
+      - automation-eda-activation-worker-1
+      - automation-eda-activation-worker-2
+    discover_patterns:
+      - automation-eda-worker-*
+      - automation-eda-activation-worker-*
+  hub:
+    execution_plane: false
+    optional_units: []
+    discover_patterns: []
+
+aap_skip_units: []
+aap_extra_start_units: []
+aap_extra_stop_units: []

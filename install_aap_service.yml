@@ -1,0 +1,30 @@
+---
+# Install aap-instance-<component> and aap-<component> system services.
+#
+# Usage:
+#   ansible-playbook -i inventory install_aap_service.yml
+#   ansible-playbook -i inventory install_aap_service.yml -l exec1.example.com
+#
+# Runs as root (become). Units are installed under /etc/systemd/system/.
+# Component scripts delegate systemctl --user to ansible_user from inventory.
+
+- name: Install AAP Services
+  hosts: automationgateway:automationcontroller:automationhub:execution_nodes:automationeda
+  become: true
+
+  vars:
+    aap_token: !vault |
+        $ANSIBLE_VAULT;1.1;AES256
+        36323133623734353238343465343134336237393461336366613466663236353532636463396162
+        3362356363366131653236633466396633616132323136370a393739353731653863636464393934
+        64396463323635326261313336346433306365663761653564356235356137366662383165306364
+        3366656531663235390a376164303336366636383662646331343930333439316636643732346161
+        63643533393236373135636262356430643138666333356564353234306561633138
+    aap_validate_certs: false
+
+  tasks:
+    - name: Install AAP Services
+      ansible.builtin.include_role:
+        name: aap_service
+        tasks_from: install.yml
+...

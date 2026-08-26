@@ -1,0 +1,15 @@
+# Reference system unit - deployed to /etc/systemd/system/aap-execution.service
+[Unit]
+Description=AAP execution local lifecycle (container systemd units)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/aap-execution start
+ExecStop=/usr/local/bin/aap-execution stop
+TimeoutStopSec=600
+
+[Install]
+WantedBy=multi-user.target

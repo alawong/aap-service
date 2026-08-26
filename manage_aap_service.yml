@@ -1,0 +1,33 @@
+---
+# Manage aap-instance-<component> and aap-<component> system services.
+#
+# Usage:
+#   ansible-playbook -i inventory manage_aap_service.yml \
+#     -e aap_state=stopped -l exec1.example.com
+#
+#   ansible-playbook -i inventory manage_aap_service.yml \
+#     -e aap_state=started -l exec1.example.com
+#
+# Required:
+#   aap_state: started | stopped
+#
+# Runs as root (become).
+
+- name: Manage AAP Services
+  hosts: automationgateway:automationcontroller:automationhub:execution_nodes:automationeda
+  become: true
+
+  pre_tasks:
+    - name: Check that aap_state is defined and is either started or stopped
+      ansible.builtin.assert:
+        that:
+          - aap_state is defined
+          - aap_state in ['started', 'stopped']
+        fail_msg: Set -e aap_state=started or -e aap_state=stopped
+
+  tasks:
+    - name: Manage AAP Services
+      ansible.builtin.include_role:
+        name: aap_service
+        tasks_from: manage.yml
+...

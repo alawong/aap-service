@@ -1,0 +1,32 @@
+---
+- name: Stop instance mesh service
+  ansible.builtin.systemd:
+    name: "aap-instance-{{ aap_instance_group_map[instance_group] }}.service"
+    state: "{{ aap_state }}"
+    enabled: "{{ aap_state == 'started' }}"
+    daemon_reload: true
+  loop: "{{ group_names | intersect(aap_instance_group_map.keys()) | list }}"
+  loop_control:
+    loop_var: instance_group
+  when: aap_state == 'stopped'
+
+- name: Manage component service state
+  ansible.builtin.systemd:
+    name: "aap-{{ aap_node_type }}.service"
+    state: "{{ aap_state }}"
+    enabled: "{{ aap_state == 'started' }}"
+    daemon_reload: true
+  when: >-
+    not (aap_state == 'stopped'
+    and (group_names | intersect(aap_instance_group_map.keys()) | length > 0))
+
+- name: Start instance mesh service
+  ansible.builtin.systemd:
+    name: "aap-instance-{{ aap_instance_group_map[instance_group] }}.service"
+    state: "{{ aap_state }}"
+    enabled: "{{ aap_state == 'started' }}"
+    daemon_reload: true
+  loop: "{{ group_names | intersect(aap_instance_group_map.keys()) | list }}"
+  loop_control:
+    loop_var: instance_group
+  when: aap_state == 'started'

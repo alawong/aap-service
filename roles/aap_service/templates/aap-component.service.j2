@@ -1,0 +1,14 @@
+[Unit]
+Description=AAP {{ aap_node_type }} local lifecycle (container systemd units)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/aap-{{ aap_node_type }} start
+ExecStop=/usr/local/bin/aap-{{ aap_node_type }} stop
+TimeoutStopSec=600
+
+[Install]
+WantedBy=multi-user.target

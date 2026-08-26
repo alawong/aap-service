@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+# {{ ansible_managed }}
+{% set _profile = aap_profiles[aap_node_type] %}
+{% set _services = aap_services[aap_node_type] %}
+{% set _stop = aap_stop_services[aap_node_type] if aap_node_type in aap_stop_services else (_services | reverse | list) %}
+{% set aap_component_config = {
+  'component': aap_node_type,
+  'user': ansible_user,
+  'start_units': _services + aap_extra_start_units,
+  'stop_units': _stop + aap_extra_stop_units,
+  'optional_units': _profile.optional_units,
+  'discover_patterns': _profile.discover_patterns,
+  'skip_units': aap_skip_units,
+} %}
+
+import fnmatch
+import json
+import logging
+import os
+import pwd
+import subprocess
+import sys
+
+_CONFIG = json.loads("""{{ aap_component_config | to_json }}""")
+COMPONENT = _CONFIG["component"]
+SERVICE_NAME = "aap-%s" % COMPONENT
+AAP_USER = _CONFIG["user"]
+START_UNITS = _CONFIG["start_units"]
+STOP_UNITS = _CONFIG["stop_units"]
+OPTIONAL_UNITS = _CONFIG["optional_units"]
+DISCOVER_PATTERNS = _CONFIG["discover_patterns"]
+SKIP_UNITS = _CONFIG["skip_units"]
+EXECUTION_PLANE = {{ 'True' if _profile.execution_plane else 'False' }}
+LOG = logging.getLogger(SERVICE_NAME)
+VALID_ACTIONS = ("start", "stop")
+
+
+def setup_logging():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+
+def parse_action():
+    if len(sys.argv) != 2 or sys.argv[1] not in VALID_ACTIONS:
+        print("Usage: %s start|stop" % sys.argv[0], file=sys.stderr)
+        sys.exit(2)
+
+    return sys.argv[1]
+
+
+def aap_context():
+    pw = pwd.getpwnam(AAP_USER)
+    env = os.environ.copy()
+    env["XDG_RUNTIME_DIR"] = "/run/user/%s" % pw.pw_uid
+    env["HOME"] = pw.pw_dir
+    env["USER"] = AAP_USER
+
+    if EXECUTION_PLANE:
+        env["CONTAINER_HOST"] = "unix:///run/user/%s/podman/podman.sock" % pw.pw_uid
+        env["CONTAINERS_STORAGE_CONF"] = os.path.join(pw.pw_dir, "aap/containers/storage.conf")
+
+    return pw.pw_uid, pw.pw_dir, env
+
+
+def systemctl(args, check=True):
+    # Wrapper may run as root; Podman units belong to AAP_USER's user manager.
+    uid, _, env = aap_context()
+    cmd = ["systemctl", "--user"] + args
+    LOG.debug("Running as %s: %s", AAP_USER, " ".join(cmd))
+
+    return subprocess.run(
+        cmd, env=env, user=uid, group=uid, capture_output=True, text=True, check=check
+    )
+
+
+def unit_path(name):
+    _, home, _ = aap_context()
+    unit = name if name.endswith(".service") else name + ".service"
+    return os.path.join(home, ".config/systemd/user", unit)
+
+
+def unit_exists(name):
+    return os.path.exists(unit_path(name))
+
+
+def discover_units():
+    _, home, _ = aap_context()
+    systemd_dir = os.path.join(home, ".config/systemd/user")
+
+    if not os.path.isdir(systemd_dir):
+        return []
+
+    found = []
+
+    for filename in sorted(os.listdir(systemd_dir)):
+        if not filename.endswith(".service"):
+            continue
+        stem = filename[:-8]
+        for pattern in DISCOVER_PATTERNS:
+            if fnmatch.fnmatch(stem, pattern):
+                found.append(stem)
+                break
+
+    return found
+
+
+def resolve_units(ordered):
+    units = []
+    seen = set()
+
+    for unit in ordered:
+        if unit in SKIP_UNITS or unit in seen:
+            continue
+        if unit in OPTIONAL_UNITS and not unit_exists(unit):
+            LOG.info("Optional unit %s not present; skipping", unit)
+            continue
+        if not unit_exists(unit):
+            raise FileNotFoundError("Required systemd unit not found: %s.service" % unit)
+        units.append(unit)
+        seen.add(unit)
+
+    for unit in discover_units():
+        if unit not in seen and unit not in SKIP_UNITS:
+            units.append(unit)
+            seen.add(unit)
+
+    return units
+
+
+def start_units():
+    for unit in resolve_units(START_UNITS):
+        LOG.info("Starting %s", unit)
+        systemctl(["start", unit])
+
+
+def stop_units():
+    workers = discover_units() if DISCOVER_PATTERNS else []
+    base = resolve_units(STOP_UNITS)
+    stop_list = workers + [u for u in base if u not in workers]
+    seen = set()
+
+    for unit in stop_list:
+        if unit in seen:
+            continue
+        seen.add(unit)
+        LOG.info("Stopping %s", unit)
+        systemctl(["stop", unit], check=False)
+
+    failed = []
+
+    for unit in stop_list:
+        result = systemctl(["is-active", unit], check=False)
+        if result.stdout.strip() not in ("inactive", "failed", "unknown"):
+            failed.append(unit)
+
+    if failed:
+        raise RuntimeError("Failed to stop systemd units: %s" % ", ".join(failed))
+
+
+def main():
+    setup_logging()
+    action = parse_action()
+
+    if action == "start":
+        start_units()
+        print("started")
+        return 0
+
+    if action == "stop":
+        stop_units()
+        print("stopped")
+        return 0
+
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
