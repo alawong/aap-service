@@ -1,4 +1,8 @@
 ---
+- name: Validate node type is supported
+  ansible.builtin.import_tasks: 
+    file: validate.yml
+
 - name: Stop instance mesh service
   ansible.builtin.systemd:
     name: "aap-instance-{{ aap_node_type }}.service"

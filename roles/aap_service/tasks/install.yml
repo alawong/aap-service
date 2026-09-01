@@ -1,14 +1,7 @@
 ---
 - name: Validate node type is supported
-  ansible.builtin.assert:
-    that:
-      - aap_node_type | length > 0
-      - aap_node_type in aap_inventory_group_map.values() | list
-    fail_msg: >-
-      Could not determine aap_node_type from installer inventory groups
-      (automationcontroller, automationgateway, automationhub, execution_nodes,
-      automationeda, redis).
-      Set aap_node_type on the host or exclude database hosts.
+  ansible.builtin.import_tasks: 
+    file: validate.yml
 
 - name: Install mesh instance services
   ansible.builtin.import_tasks: 

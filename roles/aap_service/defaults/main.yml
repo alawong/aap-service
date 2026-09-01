@@ -34,7 +34,6 @@ aap_services:
     - automation-gateway
     - automation-gateway-proxy
   controller:
-    - postgresql
     - redis-unix
     - redis-tcp
     - automation-controller-task
@@ -55,6 +54,8 @@ aap_services:
     - automation-eda-daphne
     - automation-eda-api
   hub:
+    - redis-unix
+    - redis-tcp
     - automation-hub-api
     - automation-hub-content
     - automation-hub-web
@@ -72,7 +73,6 @@ aap_stop_services:
     - automation-controller-rsyslog
     - redis-unix
     - redis-tcp
-    - postgresql
   eda:
     - automation-eda-api
     - automation-eda-daphne
@@ -90,6 +90,8 @@ aap_stop_services:
     - automation-hub-web
     - automation-hub-worker-1
     - automation-hub-worker-2
+    - redis-unix
+    - redis-tcp
   redis:
     - redis-unix
     - redis-tcp
@@ -104,7 +106,6 @@ aap_profiles:
   controller:
     execution_plane: true
     optional_units:
-      - postgresql
       - redis-unix
       - redis-tcp
     discover_patterns: []

@@ -137,12 +137,17 @@ ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l aut
 ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l automationgateway
 ```
 
-**On the node (execution example)**
+**Manual Steps for an Execution Node**
 
 ```bash
 sudo systemctl stop aap-instance-execution.service
 # wait for jobs to finish
 sudo systemctl stop aap-execution.service
+
+# perform maintenance
+dnf upgrade
+
+#restart AAP services
 sudo systemctl start aap-execution.service
 sudo systemctl start aap-instance-execution.service
 ```
@@ -152,14 +157,14 @@ sudo systemctl start aap-instance-execution.service
 ### Risks
 
 
-| Component                         | Playbook `stopped` alone? | Risk                                        |
-| --------------------------------- | ------------------------- | ------------------------------------------- |
-| Instance (controller / execution) | Yes                       | Low — drains mesh; does not stop containers |
-| Gateway                           | Yes                       | High — UI/API down; breaks mesh scripts     |
-| Controller / execution (local)    | Manual step required      | High — stops job execution; drain first     |
-| Hub                               | Yes                       | Moderate — collection sync/publish fails    |
-| EDA                               | Yes                       | Low for controller jobs — pauses EDA only   |
-| Redis (`aap-redis`)               | Yes                       | High — gateway and EDA lose cache/queues    |
+| Component                         | Playbook `stopped` alone? | Risk                                                                |
+| --------------------------------- | ------------------------- | ------------------------------------------------------------------- |
+| Instance (controller / execution) | Yes                       | Low - drains mesh; does not stop container services                 |
+| Gateway                           | Yes                       | High - UI/API down; will break aap-instance-* service scripts       |
+| Controller / execution (local)    | Manual step required      | High — breaks job execution; drain jobs first                       |
+| Hub                               | Yes                       | Moderate - collection sync/publish and EE sync/publishing will fail |
+| EDA                               | Yes                       | Low for controller jobs, High for active EDA rulebook activations   |
+| Redis (`aap-redis`)               | Yes                       | High - gateway and EDA lose cache/queues                            |
 
 
 

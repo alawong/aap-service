@@ -3,16 +3,23 @@
   ansible.builtin.set_fact:
     aap_hostname: >-
       {{ 'https://' + aap_hostname if not aap_hostname.startswith('https://') else aap_hostname }}
-  when: aap_hostname | length > 0
+  when: aap_hostname is defined
 
 - name: Validate aap_hostname is set
   ansible.builtin.assert:
     that:
-      - aap_hostname | length > 0
+      - aap_hostname is defined
       - aap_hostname is match('^https://')
     fail_msg: >-
       Set aap_hostname in inventory (gateway URL for the controller API).
       https:// is added automatically if omitted.
+
+- name: Validate aap_token is set
+  ansible.builtin.assert:
+    that:
+      - aap_token is defined
+    fail_msg: >-
+      Set aap_token in the playbook variables.
 
 - name: Ensure systemd-creds is installed
   ansible.builtin.package:
@@ -39,7 +46,7 @@
     executable: /bin/bash
   environment:
     AAP_TOKEN: "{{ aap_token }}"
-  when: aap_token | length > 0
+  when: aap_token is defined
   no_log: true
   changed_when: true
 
