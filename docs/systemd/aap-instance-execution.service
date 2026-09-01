@@ -1,0 +1,17 @@
+# Reference system unit - deployed to /etc/systemd/system/aap-instance-execution.service
+[Unit]
+Description=AAP instance enable/disable (controller mesh, execution)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+LoadCredentialEncrypted=aap_token:/etc/credstore.encrypted/aap_token
+PrivateMounts=yes
+ExecStart=/usr/local/bin/aap-instance-execution start
+ExecStop=/usr/local/bin/aap-instance-execution stop
+TimeoutStartSec=660
+
+[Install]
+WantedBy=multi-user.target

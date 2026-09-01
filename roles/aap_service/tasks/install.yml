@@ -6,63 +6,14 @@
       - aap_node_type in aap_inventory_group_map.values() | list
     fail_msg: >-
       Could not determine aap_node_type from installer inventory groups
-      (automationcontroller, automationgateway, automationhub, execution_nodes, automationeda).
-      Set aap_node_type on the host or exclude hub/database hosts.
+      (automationcontroller, automationgateway, automationhub, execution_nodes,
+      automationeda, redis).
+      Set aap_node_type on the host or exclude database hosts.
 
-- name: Normalize aap_hostname URL scheme
-  ansible.builtin.set_fact:
-    aap_hostname: >-
-      {{ 'https://' + aap_hostname if not aap_hostname.startswith('https://') else aap_hostname }}
-  when:
-    - group_names | intersect(aap_instance_group_map.keys()) | length > 0
-    - aap_hostname | length > 0
-
-- name: Validate aap_hostname is set
-  ansible.builtin.assert:
-    that:
-      - aap_hostname | length > 0
-      - aap_hostname is match('^https://')
-    fail_msg: >-
-      Set aap_hostname in inventory (gateway URL for the controller API).
-      https:// is added automatically if omitted.
-  when: group_names | intersect(aap_instance_group_map.keys()) | length > 0
-
-- name: Ensure systemd-creds is installed
-  ansible.builtin.package:
-    name: systemd
-    state: present
-  when: group_names | intersect(aap_instance_group_map.keys()) | length > 0
-
-- name: Ensure AAP config directory exists
-  ansible.builtin.file:
-    path: /etc/aap
-    state: directory
-    mode: "0755"
-
-- name: Ensure encrypted credential directory exists
-  ansible.builtin.file:
-    path: /etc/credstore.encrypted
-    state: directory
-    mode: "0700"
-  when: group_names | intersect(aap_instance_group_map.keys()) | length > 0
-
-- name: Encrypt AAP API token into systemd credstore
-  ansible.builtin.shell: |
-    set -euo pipefail
-    umask 077
-    printf '%s' "${AAP_TOKEN}" > '/etc/aap/.token.staging'
-    systemd-creds encrypt --name=aap_token \
-      '/etc/aap/.token.staging' '/etc/credstore.encrypted/aap_token'
-    shred -uz '/etc/aap/.token.staging'
-  args:
-    executable: /bin/bash
-  environment:
-    AAP_TOKEN: "{{ aap_token }}"
-  when:
-    - group_names | intersect(aap_instance_group_map.keys()) | length > 0
-    - aap_token | length > 0
-  no_log: true
-  changed_when: true
+- name: Install mesh instance services
+  ansible.builtin.import_tasks: 
+    file: mesh.yml
+  when: aap_node_type in aap_mesh_node_types
 
 - name: Install component lifecycle script
   ansible.builtin.template:
@@ -82,35 +33,3 @@
     enabled: true
     state: started
     daemon_reload: true
-
-- name: Install instance lifecycle script
-  ansible.builtin.template:
-    src: aap-instance.py.j2
-    dest: "/usr/local/bin/aap-instance-{{ aap_instance_group_map[instance_group] }}"
-    mode: "0755"
-  loop: "{{ group_names | intersect(aap_instance_group_map.keys()) | list }}"
-  loop_control:
-    loop_var: instance_group
-  vars:
-    aap_instance_component: "{{ aap_instance_group_map[instance_group] }}"
-
-- name: Install instance systemd unit
-  ansible.builtin.template:
-    src: aap-instance.service.j2
-    dest: "/etc/systemd/system/aap-instance-{{ aap_instance_group_map[instance_group] }}.service"
-    mode: "0644"
-  loop: "{{ group_names | intersect(aap_instance_group_map.keys()) | list }}"
-  loop_control:
-    loop_var: instance_group
-  vars:
-    aap_instance_component: "{{ aap_instance_group_map[instance_group] }}"
-
-- name: Enable and start instance service
-  ansible.builtin.systemd:
-    name: "aap-instance-{{ aap_instance_group_map[instance_group] }}.service"
-    enabled: true
-    state: started
-    daemon_reload: true
-  loop: "{{ group_names | intersect(aap_instance_group_map.keys()) | list }}"
-  loop_control:
-    loop_var: instance_group

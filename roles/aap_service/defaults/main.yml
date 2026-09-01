@@ -6,9 +6,9 @@ aap_validate_certs: true
 aap_instance_ready_timeout_seconds: 600
 aap_instance_ready_poll_seconds: 15
 
-aap_instance_group_map:
-  automationcontroller: controller
-  execution_nodes: executionnode
+aap_mesh_node_types:
+  - controller
+  - execution
 
 aap_inventory_group_map:
   automationcontroller: controller
@@ -16,6 +16,7 @@ aap_inventory_group_map:
   automationhub: hub
   execution_nodes: execution
   automationeda: eda
+  redis: redis
 
 aap_node_type: >-
   {{ 'controller' if 'automationcontroller' in group_names
@@ -23,15 +24,19 @@ aap_node_type: >-
      else 'hub' if 'automationhub' in group_names
      else 'execution' if 'execution_nodes' in group_names
      else 'eda' if 'automationeda' in group_names
+     else 'redis' if 'redis' in group_names
      else '' }}
 
 aap_services:
   gateway:
+    - redis-unix
+    - redis-tcp
     - automation-gateway
     - automation-gateway-proxy
   controller:
     - postgresql
-    - redis
+    - redis-unix
+    - redis-tcp
     - automation-controller-task
     - automation-controller-web
     - automation-controller-rsyslog
@@ -39,6 +44,8 @@ aap_services:
   execution:
     - receptor
   eda:
+    - redis-unix
+    - redis-tcp
     - automation-eda-scheduler
     - automation-eda-activation-worker-1
     - automation-eda-activation-worker-2
@@ -53,6 +60,9 @@ aap_services:
     - automation-hub-web
     - automation-hub-worker-1
     - automation-hub-worker-2
+  redis:
+    - redis-unix
+    - redis-tcp
 
 aap_stop_services:
   controller:
@@ -60,7 +70,8 @@ aap_stop_services:
     - automation-controller-web
     - receptor
     - automation-controller-rsyslog
-    - redis
+    - redis-unix
+    - redis-tcp
     - postgresql
   eda:
     - automation-eda-api
@@ -71,23 +82,31 @@ aap_stop_services:
     - automation-eda-activation-worker-1
     - automation-eda-activation-worker-2
     - automation-eda-scheduler
+    - redis-unix
+    - redis-tcp
   hub:
     - automation-hub-api
     - automation-hub-content
     - automation-hub-web
     - automation-hub-worker-1
     - automation-hub-worker-2
+  redis:
+    - redis-unix
+    - redis-tcp
 
 aap_profiles:
   gateway:
     execution_plane: false
-    optional_units: []
+    optional_units:
+      - redis-unix
+      - redis-tcp
     discover_patterns: []
   controller:
     execution_plane: true
     optional_units:
       - postgresql
-      - redis
+      - redis-unix
+      - redis-tcp
     discover_patterns: []
   execution:
     execution_plane: true
@@ -100,10 +119,18 @@ aap_profiles:
       - automation-eda-worker-2
       - automation-eda-activation-worker-1
       - automation-eda-activation-worker-2
+      - redis-unix
+      - redis-tcp
     discover_patterns:
       - automation-eda-worker-*
       - automation-eda-activation-worker-*
   hub:
+    execution_plane: false
+    optional_units:
+      - redis-unix
+      - redis-tcp
+    discover_patterns: []
+  redis:
     execution_plane: false
     optional_units: []
     discover_patterns: []

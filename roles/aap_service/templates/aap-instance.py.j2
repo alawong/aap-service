@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # {{ ansible_managed }}
 {% set aap_instance_config = {
-  'service': 'aap-instance-' + aap_instance_component,
+  'service': 'aap-instance-' + aap_node_type,
   'instance_hostname': aap_instance_hostname,
   'hostname': aap_hostname,
   'ready_timeout_seconds': aap_instance_ready_timeout_seconds,

@@ -1,0 +1,34 @@
+---
+- name: Remove mesh instance services
+  when: aap_node_type in aap_mesh_node_types
+  block:
+    - name: Remove instance systemd unit
+      ansible.builtin.file:
+        path: "/etc/systemd/system/aap-instance-{{ aap_node_type }}.service"
+        state: absent
+
+    - name: Remove instance script
+      ansible.builtin.file:
+        path: "/usr/local/bin/aap-instance-{{ aap_node_type }}"
+        state: absent
+
+    - name: Remove encrypted API token
+      ansible.builtin.file:
+        path: /etc/credstore.encrypted/aap_token
+        state: absent
+
+- name: Remove component systemd unit
+  ansible.builtin.file:
+    path: "/etc/systemd/system/aap-{{ aap_node_type }}.service"
+    state: absent
+  when: aap_node_type | length > 0
+
+- name: Remove component script
+  ansible.builtin.file:
+    path: "/usr/local/bin/aap-{{ aap_node_type }}"
+    state: absent
+  when: aap_node_type | length > 0
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true

@@ -14,7 +14,7 @@
 # Runs as root (become).
 
 - name: Manage AAP Services
-  hosts: automationgateway:automationcontroller:automationhub:execution_nodes:automationeda
+  hosts: automationgateway:automationcontroller:automationhub:execution_nodes:automationeda:redis
   become: true
 
   pre_tasks:

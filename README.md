@@ -6,7 +6,7 @@ Repository that contains roles that install and manage per-component system serv
 | Component                 | Service                              | Purpose                                                                                             |
 | ------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------- |
 | **instance (controller)** | `aap-instance-controller.service`    | Disable/enable controller in mesh (API), installed on hosts within the `automationcontroller` group |
-| **instance (execution)**  | `aap-instance-executionnode.service` | Disable/enable execution node in mesh (API), installed on hosts within the `execution_nodes` group  |
+| **instance (execution)**  | `aap-instance-execution.service` | Disable/enable execution node in mesh (API), installed on hosts within the `execution_nodes` group  |
 | **gateway**               | `aap-gateway.service`                | Stop/start local gateway services                                                                   |
 | **controller**            | `aap-controller.service`             | Stop/start local controller services                                                                |
 | **execution**             | `aap-execution.service`              | Stop/start local receptor service                                                                   |
@@ -14,7 +14,7 @@ Repository that contains roles that install and manage per-component system serv
 | **hub**                   | `aap-hub.service`                    | Stop/start local hub services                                                                       |
 
 
-`aap-instance-controller` is installed on `automationcontroller` hosts; `aap-instance-executionnode` on `execution_nodes`.
+`aap-instance-controller` is installed on `automationcontroller` hosts; `aap-instance-execution` on `execution_nodes`.
 
 ## Usage
 
@@ -28,7 +28,7 @@ Follow the [Red Hat stop order](#red-hat-recommended-order-containerized) for ma
 
 ### Limitations
 
-It is assumed that only 1 AAP component is deployed per AAP node, and that there is therefore no AAP component co-location. The service installation playbook only deploys a single `aap-<component>` service per AAP node, using the following preceence: controller - gateway - hub - execution - eda. Automation Mesh services (`aap-instance-*`) are still installed for the `automationcontroller` and `execution_nodes` inventory groups.
+Each host runs a single AAP component wrapper (`aap-<component>`). `aap_node_type` is derived from inventory groups with precedence: controller, gateway, hub, execution, eda, redis. Dedicated Redis hosts (`[redis]` only) install `aap-redis`. Automation Mesh lifecycle services (`aap-instance-*`) apply only when `aap_node_type` is `controller` or `execution`.
 
 The `aap-instance-*` roles do not wait for running jobs to finish before the service returns an `inactive` status. Stopping the `aap-controller` or `aap-execution` services after all jobs have completed running must be done manually.
 
@@ -47,7 +47,7 @@ ansible-playbook -i inventory install_aap_service.yml -l exec1.example.com
 | `ansible_user`                       | Derived from inventory                              | Yes                                                 | string          | Inventory - user that owns AAP Podman container services.                                                                                                                                     |
 | `aap_validate_certs`                 | `true` (role); `false` in `install_aap_service.yml` | No                                                  | boolean         | Verify TLS when calling the controller API from instance scripts.                                                                                                                             |
 | `aap_instance_hostname`              | `routable_hostname`, else `inventory_hostname`      | No                                                  | string          | Hostname of this instance in the controller mesh.                                                                                                                                             |
-| `aap_node_type`                      | Derived from inventory groups                       | No                                                  | string          | Component wrapper to install: `gateway`, `controller`, `execution`, `eda`, or `hub`. See [Limitations](#limitations) on collocated hosts.                                                     |
+| `aap_node_type`                      | Derived from inventory groups                       | No                                                  | string          | Component wrapper: `gateway`, `controller`, `execution`, `eda`, `hub`, or `redis`. Mesh lifecycle (`aap-instance-*`) applies only to `controller` and `execution`.                            |
 | `aap_skip_units`                     | `[]`                                                | No                                                  | list            | Container service names to skip during start/stop (e.g. `postgresql` when external).                                                                                                          |
 | `aap_extra_start_units`              | `[]`                                                | No                                                  | list            | Extra container services to start after the profile list.                                                                                                                                     |
 | `aap_extra_stop_units`               | `[]`                                                | No                                                  | list            | Extra container services to stop.                                                                                                                                                             |
@@ -83,6 +83,15 @@ ansible-playbook -i inventory manage_aap_service.yml \
 
 On `automationcontroller` and `execution_nodes`, `stopped` runs mesh drain (`aap-instance-*`) only; stop `aap-controller` / `aap-execution` manually after jobs finish. Other groups stop the component wrapper service directly.
 
+### Uninstall
+
+```bash
+ansible-playbook -i inventory uninstall_aap_service.yml
+ansible-playbook -i inventory uninstall_aap_service.yml -l exec1.example.com
+```
+
+Removes `aap-<component>` and `aap-instance-*` wrapper units and scripts without stopping them (Podman containers and mesh state are left as-is). On mesh hosts, also removes `/etc/credstore.encrypted/aap_token`. Does not remove AAP Podman container unit files or containers. Use `-l` to target a single host or group.
+
 ### Validation
 
 Check wrapper services (system units - use `-b`) and containers (Podman - run as `ansible_user`, no `-b`). Replace `gateway1.example.com` with your host or omit `-l` to target the whole group.
@@ -111,10 +120,10 @@ ansible -i inventory automationcontroller -l controller1.example.com -a "podman 
 
 ```bash
 ansible -i inventory execution_nodes -b -a "systemctl status aap-execution.service"
-ansible -i inventory execution_nodes -b -a "systemctl status aap-instance-executionnode.service"
+ansible -i inventory execution_nodes -b -a "systemctl status aap-instance-execution.service"
 ansible -i inventory execution_nodes -a "podman ps -a"
 ansible -i inventory execution_nodes -b -l exec1.example.com -a "systemctl status aap-execution.service"
-ansible -i inventory execution_nodes -b -l exec1.example.com -a "systemctl status aap-instance-executionnode.service"
+ansible -i inventory execution_nodes -b -l exec1.example.com -a "systemctl status aap-instance-execution.service"
 ansible -i inventory execution_nodes -l exec1.example.com -a "podman ps -a"
 ```
 
@@ -136,11 +145,20 @@ ansible -i inventory automationeda -b -l eda1.example.com -a "systemctl status a
 ansible -i inventory automationeda -l eda1.example.com -a "podman ps -a"
 ```
 
+**Centralized Redis** (`[redis]` hosts)
+
+```bash
+ansible -i inventory redis -b -a "systemctl status aap-redis.service"
+ansible -i inventory redis -a "podman ps -a"
+ansible -i inventory redis -b -l redis1.example.com -a "systemctl status aap-redis.service"
+ansible -i inventory redis -l redis1.example.com -a "podman ps -a"
+```
+
 `systemctl status` exits non-zero when a unit is not active; Ansible may report that as a failed task even when the output is useful.
 
 ### Full-stack maintenance
 
-Stop in order (1 - 6); start in reverse (6 - 1). Mesh drain before execution/controller local stops.
+Stop in order (1 - 7); start in reverse (7 - 1). Mesh drain before execution/controller local stops. Dedicated `[redis]` hosts use step 6; colocated Redis stops last within `aap-gateway` / `aap-eda` when `redis-unix` / `redis-tcp` units are present on the host.
 
 ```bash
 # Stop
@@ -151,9 +169,12 @@ ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l exe
 ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l automationcontroller
 # wait for jobs; then on each controller node: sudo systemctl stop aap-controller.service
 ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l automationhub
+ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l redis
 # local PostgreSQL: sudo systemctl --user stop postgresql.service
 
 # Start
+# local PostgreSQL: sudo systemctl --user start postgresql.service
+ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l redis
 ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l automationhub
 ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l automationcontroller
 ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l execution_nodes
@@ -165,7 +186,7 @@ Verify gateway health and component registration before production use.
 
 ### Single component or node
 
-Use one section when maintaining a single component. For multiple components in one window, run stop sections in order (1 - 6) and start in reverse (6 - 1).
+Use one section when maintaining a single component. For multiple components in one window, run stop sections in order (1 - 7) and start in reverse (7 - 1).
 
 #### Stop
 
@@ -207,7 +228,14 @@ ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l aut
 ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l hub1.example.com
 ```
 
-**6. Database (local PostgreSQL)**
+**6. Centralized Redis** (`[redis]` hosts only; colocated Redis stops with gateway/EDA)
+
+```bash
+ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l redis
+ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l redis1.example.com
+```
+
+**7. Database (local PostgreSQL)**
 
 ```bash
 sudo systemctl --user stop postgresql.service
@@ -217,7 +245,14 @@ sudo systemctl --user stop postgresql.service
 
 On controller/execution hosts, start local container services before the playbook `started` run (mesh re-enable waits for `node_state=ready`).
 
-**6. Database** - `sudo systemctl --user start postgresql.service`
+**7. Database** - `sudo systemctl --user start postgresql.service`
+
+**6. Centralized Redis**
+
+```bash
+ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l redis
+ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l redis1.example.com
+```
 
 **5. Hub**
 
@@ -259,11 +294,11 @@ ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l gat
 ### On the node (without Ansible)
 
 ```bash
-sudo systemctl stop aap-instance-executionnode.service
+sudo systemctl stop aap-instance-execution.service
 # wait for jobs to finish
 sudo systemctl stop aap-execution.service
 sudo systemctl start aap-execution.service
-sudo systemctl start aap-instance-executionnode.service
+sudo systemctl start aap-instance-execution.service
 ```
 
 Binaries live under `/usr/local/bin/aap-*`.
@@ -276,7 +311,7 @@ Binaries live under `/usr/local/bin/aap-*`.
 | Layer     | Service                                                                | Effect                                                                                        |
 | --------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | **Mesh**  | `aap-instance-`*                                                       | Controller API (`enabled: false`). Does not stop containers. Stops new jobs to that instance. |
-| **Local** | `aap-gateway`, `aap-controller`, `aap-execution`, `aap-eda`, `aap-hub` | Stops Podman container services. Can kill running work immediately.                           |
+| **Local** | `aap-gateway`, `aap-controller`, `aap-execution`, `aap-eda`, `aap-hub`, `aap-redis` | Stops Podman container services. Can kill running work immediately.                           |
 
 
 ### Red Hat recommended order (containerized)
@@ -288,15 +323,16 @@ Red Hat documents platform-wide order in [KCS 7124426](https://access.redhat.com
 
 | Step | Node type             | Services (`systemctl --user stop ...`)                                                                                                                                                                                              |
 | ---- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | Automation Gateway    | `automation-gateway`, `automation-gateway-proxy`                                                                                                                                                                                  |
-| 2    | EDA Server            | `automation-eda-api`, `automation-eda-daphne`, `automation-eda-web`, `automation-eda-worker-1`, `automation-eda-worker-2`, `automation-eda-activation-worker-1`, `automation-eda-activation-worker-2`, `automation-eda-scheduler` |
-| 3    | Execution Node        | `receptor` - mesh drain first (`aap-instance-executionnode`)                                                                                                                                                                      |
-| 4    | Automation Controller | `automation-controller-task`, `automation-controller-web`, `receptor` - mesh drain first                                                                                                                                          |
+| 1    | Automation Gateway    | `automation-gateway`, `automation-gateway-proxy` - `redis-unix`, `redis-tcp` last when colocated on the host                                                                                                                                  |
+| 2    | EDA Server            | `automation-eda-api`, `automation-eda-daphne`, `automation-eda-web`, `automation-eda-worker-*`, `automation-eda-activation-worker-*`, `automation-eda-scheduler` - `redis-unix`, `redis-tcp` last when colocated on the host                                   |
+| 3    | Execution Node        | `receptor` - mesh drain first (`aap-instance-execution`)                                                                                                                                                                      |
+| 4    | Automation Controller | `automation-controller-task`, `automation-controller-web`, `receptor` - mesh drain first - controller-local `redis` and `postgresql` last in `aap-controller`                                                                     |
 | 5    | Automation Hub        | `automation-hub-api`, `automation-hub-content`, `automation-hub-web`, `automation-hub-worker-1`, `automation-hub-worker-2`                                                                                                        |
-| 6    | Database              | `postgresql` - omit when external (`aap_skip_units`)                                                                                                                                                                              |
+| 6    | Centralized Redis     | `redis-unix`, `redis-tcp` on dedicated `[redis]` hosts - after gateway and EDA; skipped on component hosts when unit files are absent                                                                                                  |
+| 7    | Database              | `postgresql` - omit when external (`aap_skip_units`)                                                                                                                                                                              |
 
 
-**Start:** reverse order (`start` instead of `stop`). The controller wrapper also stops `automation-controller-rsyslog`, `redis`, and `postgresql` when present. EDA worker services are optional when not installed.
+**Start:** reverse order (`start` instead of `stop`). Centralized `redis` starts first on gateway, EDA, and dedicated Redis hosts when the unit is present. Controller-local `redis` starts before controller app services. EDA worker services are optional when not installed.
 
 ### Component risks and considerations
 
@@ -310,15 +346,16 @@ Red Hat documents platform-wide order in [KCS 7124426](https://access.redhat.com
 | **Execution**             | No - manual `systemctl`        | **High** if jobs still run - drain first.                     |
 | **Hub**                   | Yes, on `automationhub`        | **Moderate** - collection syncs/publishes fail.               |
 | **EDA**                   | Yes, on `automationeda`        | **Low for controller mesh jobs** - pauses EDA only.           |
+| **Redis (centralized)**   | Yes, on `[redis]` hosts        | **High** - gateway and EDA lose cache/queues when stopped.    |
 
 
-Optional services (`postgresql`, `redis`, EDA workers) are skipped when absent.
+Optional services (`postgresql`, `redis-unix`, `redis-tcp`, EDA workers) are skipped when the unit file is absent. Colocated Redis on gateway, EDA, or hub is started first and stopped last when those units exist on the host.
 
-See [Limitations](#limitations) for collocated hosts and mesh drain behavior.
+See [Limitations](#limitations) for mesh drain behavior.
 
 ### Inventory and configuration
 
-Uses the AAP installer inventory. Playbooks target `automationgateway`, `automationcontroller`, `automationhub`, `execution_nodes`, and `automationeda` (database hosts are not targeted). `ansible_user` is the AAP install user.
+Uses the AAP installer inventory. Playbooks target `automationgateway`, `automationcontroller`, `automationhub`, `execution_nodes`, `automationeda`, and `redis` (database hosts are not targeted). `ansible_user` is the AAP install user.
 
 Set `aap_token` in `install_aap_service.yml` (vault or `-e`). `aap_validate_certs: false` is set in that playbook when the gateway cert does not match inventory hostnames.
 
@@ -330,6 +367,10 @@ Set `aap_token` in `install_aap_service.yml` (vault or `-e`). `aap_validate_cert
 | `automationhub`        | `hub`        |
 | `execution_nodes`      | `execution`  |
 | `automationeda`        | `eda`        |
+| `redis`                | `redis`      |
+
+
+Colocated Redis (`redis-unix`, `redis-tcp`) is managed by the component wrapper on gateway, EDA, or hub when the installer placed those units on the host. Dedicated Redis VMs (`[redis]` only) get `aap-redis`. Controller-local Redis is always managed by `aap-controller`.
 
 
 `aap_hostname` - gateway URL for controller API (`aap_hostname` or `gateway_main_url` from inventory; `https://` added if omitted). `aap_instance_hostname` - defaults to `routable_hostname` or `inventory_hostname`.
@@ -358,6 +399,7 @@ Rotate: update `aap_token` and re-run `install_aap_service.yml`.
 ```
 install_aap_service.yml
 manage_aap_service.yml
+uninstall_aap_service.yml
 roles/aap_service/
 docs/
   systemd/              # reference service files (deployed from role templates)

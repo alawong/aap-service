@@ -1,0 +1,21 @@
+---
+# Uninstall aap-instance-<component> and aap-<component> system services.
+#
+# Usage:
+#   ansible-playbook -i inventory uninstall_aap_service.yml
+#   ansible-playbook -i inventory uninstall_aap_service.yml -l exec1.example.com
+#
+# Removes wrapper services and scripts only (no stop/disable; ExecStop is not run).
+# Podman container units and running containers are left unchanged.
+#
+# Runs as root (become).
+
+- name: Uninstall AAP Services
+  hosts: automationgateway:automationcontroller:automationhub:execution_nodes:automationeda:redis
+  become: true
+
+  tasks:
+    - name: Uninstall AAP services
+      ansible.builtin.include_role:
+        name: aap_service
+        tasks_from: uninstall.yml

@@ -21,7 +21,7 @@ ansible-playbook -i inventory manage_aap_service.yml \
 On a single node:
 
 ```bash
-sudo systemctl stop aap-instance-executionnode.service
+sudo systemctl stop aap-instance-execution.service
 ```
 ```
 

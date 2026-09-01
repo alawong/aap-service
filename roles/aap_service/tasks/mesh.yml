@@ -1,0 +1,63 @@
+---
+- name: Normalize aap_hostname URL scheme
+  ansible.builtin.set_fact:
+    aap_hostname: >-
+      {{ 'https://' + aap_hostname if not aap_hostname.startswith('https://') else aap_hostname }}
+  when: aap_hostname | length > 0
+
+- name: Validate aap_hostname is set
+  ansible.builtin.assert:
+    that:
+      - aap_hostname | length > 0
+      - aap_hostname is match('^https://')
+    fail_msg: >-
+      Set aap_hostname in inventory (gateway URL for the controller API).
+      https:// is added automatically if omitted.
+
+- name: Ensure systemd-creds is installed
+  ansible.builtin.package:
+    name: systemd
+    state: present
+
+- name: Ensure encrypted credential directory exists
+  ansible.builtin.file:
+    path: /etc/credstore.encrypted
+    state: directory
+    mode: "0700"
+
+- name: Encrypt AAP API token into systemd credstore
+  ansible.builtin.shell: |
+    set -euo pipefail
+    umask 077
+    staging="$(mktemp /tmp/aap-token.XXXXXX)"
+    chmod 600 "${staging}"
+    printf '%s' "${AAP_TOKEN}" > "${staging}"
+    systemd-creds encrypt --name=aap_token \
+      "${staging}" '/etc/credstore.encrypted/aap_token'
+    shred -uz "${staging}"
+  args:
+    executable: /bin/bash
+  environment:
+    AAP_TOKEN: "{{ aap_token }}"
+  when: aap_token | length > 0
+  no_log: true
+  changed_when: true
+
+- name: Install instance lifecycle script
+  ansible.builtin.template:
+    src: aap-instance.py.j2
+    dest: "/usr/local/bin/aap-instance-{{ aap_node_type }}"
+    mode: "0755"
+
+- name: Install instance systemd unit
+  ansible.builtin.template:
+    src: aap-instance.service.j2
+    dest: "/etc/systemd/system/aap-instance-{{ aap_node_type }}.service"
+    mode: "0644"
+
+- name: Enable and start instance service
+  ansible.builtin.systemd:
+    name: "aap-instance-{{ aap_node_type }}.service"
+    enabled: true
+    state: started
+    daemon_reload: true
