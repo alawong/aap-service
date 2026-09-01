@@ -1,0 +1,29 @@
+# minimal inventory example
+[automationgateway]
+gateway1.example.com
+gateway2.example.com
+
+[automationcontroller]
+controller1.example.com receptor_type=control
+controller2.example.com receptor_type=control
+
+[execution_nodes]
+exec1.example.com
+exec2.example.com
+
+[automationhub]
+hub.example.com
+
+[automationeda]
+eda.example.com
+
+# optional
+[redis]
+redis1.example.com
+redis2.example.com
+
+[all:vars]
+ansible_user=awx
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+
+gateway_main_url=https://aap.example.com
