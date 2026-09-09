@@ -4,7 +4,7 @@ gateway1.example.com
 gateway2.example.com
 
 [automationcontroller]
-controller1.example.com receptor_type=control
+controller1.example.com receptor_type=hybrid
 controller2.example.com receptor_type=control
 
 [execution_nodes]

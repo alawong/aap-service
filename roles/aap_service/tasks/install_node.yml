@@ -1,0 +1,19 @@
+---
+- name: Install node lifecycle script
+  ansible.builtin.template:
+    src: aap-node.py.j2
+    dest: "/usr/local/bin/aap-{{ aap_node_type }}"
+    mode: "0755"
+
+- name: Install node systemd unit
+  ansible.builtin.template:
+    src: aap-node.service.j2
+    dest: "/etc/systemd/system/aap-{{ aap_node_type }}.service"
+    mode: "0644"
+
+- name: Enable and start node service
+  ansible.builtin.systemd:
+    name: "aap-{{ aap_node_type }}.service"
+    enabled: true
+    state: started
+    daemon_reload: true

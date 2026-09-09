@@ -9,6 +9,7 @@ aap_instance_ready_poll_seconds: 15
 aap_mesh_node_types:
   - controller
   - execution
+  - hybrid
 
 aap_inventory_group_map:
   automationcontroller: controller
@@ -18,24 +19,61 @@ aap_inventory_group_map:
   automationeda: eda
   redis: redis
 
-aap_node_type: >-
-  {{ 'controller' if 'automationcontroller' in group_names
-     else 'gateway' if 'automationgateway' in group_names
-     else 'hub' if 'automationhub' in group_names
-     else 'execution' if 'execution_nodes' in group_names
-     else 'eda' if 'automationeda' in group_names
-     else 'redis' if 'redis' in group_names
-     else '' }}
+aap_node_types: >-
+  {{
+    (['controller'] if 'automationcontroller' in group_names else [])
+    + (['gateway'] if 'automationgateway' in group_names else [])
+    + (['hub'] if 'automationhub' in group_names else [])
+    + (['execution'] if (
+        'execution_nodes' in group_names
+        or (
+          'automationcontroller' in group_names
+          and (receptor_type | default('hybrid')) == 'hybrid'
+        )
+      ) else [])
+    + (['eda'] if 'automationeda' in group_names else [])
+    + (['redis'] if (
+        'redis' in group_names
+        or (
+          'automationgateway' in group_names
+          and (groups['redis'] | default([]) | length == 0)
+          and inventory_hostname == (groups['automationgateway'] | first)
+        )
+      ) else [])
+  }}
+
+aap_mesh_instance_type: >-
+  {{
+    'hybrid' if (
+      'automationcontroller' in group_names
+      and (receptor_type | default('hybrid')) == 'hybrid'
+    )
+    else (
+      'controller' if 'automationcontroller' in group_names
+      else (
+        'execution' if 'execution_nodes' in group_names
+        else ''
+      )
+    )
+  }}
+
+# Red Hat platform stop order (KCS 7124426); start uses reverse.
+aap_manage_order:
+  - gateway
+  - eda
+  - execution
+  - controller
+  - hub
+  - redis
 
 aap_services:
   gateway:
     - redis-unix
-    - redis-tcp
     - automation-gateway
     - automation-gateway-proxy
   controller:
+    - postgresql
     - redis-unix
-    - redis-tcp
     - automation-controller-task
     - automation-controller-web
     - automation-controller-rsyslog
@@ -44,7 +82,6 @@ aap_services:
     - receptor
   eda:
     - redis-unix
-    - redis-tcp
     - automation-eda-scheduler
     - automation-eda-activation-worker-1
     - automation-eda-activation-worker-2
@@ -55,14 +92,12 @@ aap_services:
     - automation-eda-api
   hub:
     - redis-unix
-    - redis-tcp
     - automation-hub-api
     - automation-hub-content
     - automation-hub-web
     - automation-hub-worker-1
     - automation-hub-worker-2
   redis:
-    - redis-unix
     - redis-tcp
 
 aap_stop_services:
@@ -72,7 +107,7 @@ aap_stop_services:
     - receptor
     - automation-controller-rsyslog
     - redis-unix
-    - redis-tcp
+    - postgresql
   eda:
     - automation-eda-api
     - automation-eda-daphne
@@ -83,7 +118,6 @@ aap_stop_services:
     - automation-eda-activation-worker-2
     - automation-eda-scheduler
     - redis-unix
-    - redis-tcp
   hub:
     - automation-hub-api
     - automation-hub-content
@@ -91,9 +125,7 @@ aap_stop_services:
     - automation-hub-worker-1
     - automation-hub-worker-2
     - redis-unix
-    - redis-tcp
   redis:
-    - redis-unix
     - redis-tcp
 
 aap_profiles:
@@ -101,13 +133,12 @@ aap_profiles:
     execution_plane: false
     optional_units:
       - redis-unix
-      - redis-tcp
     discover_patterns: []
   controller:
     execution_plane: true
     optional_units:
+      - postgresql
       - redis-unix
-      - redis-tcp
     discover_patterns: []
   execution:
     execution_plane: true
@@ -121,7 +152,6 @@ aap_profiles:
       - automation-eda-activation-worker-1
       - automation-eda-activation-worker-2
       - redis-unix
-      - redis-tcp
     discover_patterns:
       - automation-eda-worker-*
       - automation-eda-activation-worker-*
@@ -129,7 +159,6 @@ aap_profiles:
     execution_plane: false
     optional_units:
       - redis-unix
-      - redis-tcp
     discover_patterns: []
   redis:
     execution_plane: false

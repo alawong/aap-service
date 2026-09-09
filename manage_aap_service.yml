@@ -1,5 +1,5 @@
 ---
-# Manage aap-instance-<component> and aap-<component> system services.
+# Manage mesh instance services (aap-instance-*) and component wrapper services (aap-<node_type>).
 #
 # Usage:
 #   ansible-playbook -i inventory manage_aap_service.yml \

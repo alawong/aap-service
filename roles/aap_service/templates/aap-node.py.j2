@@ -3,14 +3,20 @@
 {% set _profile = aap_profiles[aap_node_type] %}
 {% set _services = aap_services[aap_node_type] %}
 {% set _stop = aap_stop_services[aap_node_type] if aap_node_type in aap_stop_services else (_services | reverse | list) %}
-{% set aap_component_config = {
-  'component': aap_node_type,
+{% set _first_gateway = (groups['automationgateway'] | default([]) | first) %}
+{% set _skip_redis_unix_on_gateway = ['redis-unix'] if (aap_node_type == 'gateway' and _first_gateway is defined and inventory_hostname == _first_gateway) else [] %}
+{% set _skip_receptor_on_hybrid = ['receptor'] if (
+     aap_node_type == 'execution'
+     and 'controller' in aap_node_types
+   ) else [] %}
+{% set aap_node_config = {
+  'node_type': aap_node_type,
   'user': ansible_user,
   'start_units': _services + aap_extra_start_units,
   'stop_units': _stop + aap_extra_stop_units,
   'optional_units': _profile.optional_units,
   'discover_patterns': _profile.discover_patterns,
-  'skip_units': aap_skip_units,
+  'skip_units': aap_skip_units + _skip_redis_unix_on_gateway + _skip_receptor_on_hybrid,
 } %}
 
 import fnmatch
@@ -21,9 +27,9 @@ import pwd
 import subprocess
 import sys
 
-_CONFIG = json.loads("""{{ aap_component_config | to_json }}""")
-COMPONENT = _CONFIG["component"]
-SERVICE_NAME = "aap-%s" % COMPONENT
+_CONFIG = json.loads("""{{ aap_node_config | to_json }}""")
+NODE_TYPE = _CONFIG["node_type"]
+SERVICE_NAME = "aap-%s" % NODE_TYPE
 AAP_USER = _CONFIG["user"]
 START_UNITS = _CONFIG["start_units"]
 STOP_UNITS = _CONFIG["stop_units"]

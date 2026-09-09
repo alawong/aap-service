@@ -1,23 +1,26 @@
 # AAP Node Lifecycle Services
 
-Ansible role and playbooks that install system-level wrapper services for containerized AAP 2.6 nodes. Playbooks run as **root** (`become`). System unit files live in `/etc/systemd/system/`; scripts in `/usr/local/bin/`. Component scripts run `systemctl --user` as `ansible_user` from inventory.
+Ansible role and playbooks that install system-level wrapper services for containerized AAP 2.6 nodes. Playbooks run as **root** (`become`). System unit files live in `/etc/systemd/system/`; scripts in `/usr/local/bin/`. Component wrapper service scripts run `systemctl --user` as `ansible_user` from inventory.
+
+A single host may run more than one AAP role (for example gateway and controller on the same server). The role installs one **component wrapper service** per node type on that host, derived from all matching installer inventory groups.
 
 ## Services
 
 
-| Component       | Wrapper unit                      | What it does                                                                             |
+| Component       | Component wrapper service         | What it does                                                                             |
 | --------------- | --------------------------------- | ---------------------------------------------------------------------------------------- |
-| Controller mesh | `aap-instance-controller.service` | Enable/disable controller in mesh via controller API (`automationcontroller` hosts only) |
+| Controller mesh | `aap-instance-controller.service` | Enable/disable control node in mesh via controller API (`receptor_type=control`)           |
+| Hybrid mesh     | `aap-instance-hybrid.service`     | Enable/disable hybrid node in mesh via controller API (`receptor_type=hybrid`, default)  |
 | Execution mesh  | `aap-instance-execution.service`  | Enable/disable execution node in mesh via controller API (`execution_nodes` hosts only)  |
 | Gateway         | `aap-gateway.service`             | Start/stop local gateway Podman units                                                    |
 | Controller      | `aap-controller.service`          | Start/stop local controller Podman units                                                 |
 | Execution       | `aap-execution.service`           | Start/stop local receptor unit                                                           |
 | EDA             | `aap-eda.service`                 | Start/stop local EDA Podman units                                                        |
 | Hub             | `aap-hub.service`                 | Start/stop local hub Podman units                                                        |
-| Redis           | `aap-redis.service`               | Start/stop centralized Redis on dedicated `[redis]` hosts                                |
+| Redis           | `aap-redis.service`               | Start/stop centralized `redis-tcp` (`[redis]` hosts, or first gateway when `[redis]` is empty) |
 
 
-Automation Mesh wrappers (`aap-instance-*`) call the controller API only. Component wrappers (`aap-<component>`) manage local Podman user units only.
+Mesh instance services (`aap-instance-*`) call the controller API only. Component wrapper services (`aap-gateway`, `aap-controller`, and so on) manage local Podman user units only.
 
 ## Requirements
 
@@ -29,9 +32,11 @@ Automation Mesh wrappers (`aap-instance-*`) call the controller API only. Compon
 
 ## Limitations
 
-- One component wrapper per host. `aap_node_type` is derived from inventory groups (precedence: controller, gateway, hub, execution, eda, redis).
-- `aap-instance-*` does not wait for running jobs to finish. On controller and execution hosts, drain with the playbook first, then stop `aap-controller` or `aap-execution` manually after jobs complete.
+- `aap_node_types` lists every node type on a host from inventory group membership. Colocated hosts install multiple component wrapper services (for example `aap-gateway` and `aap-controller` on one server). Hybrid controller hosts (`receptor_type=hybrid`, the installer default) also get `aap-execution`; mesh uses a single `aap-instance-hybrid`.
+- `aap-instance-*` does not wait for running jobs to finish. On controller and execution hosts, drain with the playbook first, then stop `aap-controller` or `aap-execution` manually after jobs complete (both on hybrid).
 - Uninstall removes wrapper units and scripts only; it does not stop Podman containers or change mesh state.
+- On colocated hosts, a single `manage_aap_service.yml` run applies Red Hat platform order across every component wrapper service on that host (`aap_manage_order`: gateway → eda → execution → controller → hub → redis on stop; reverse on start). Mesh drain/start still runs before and after that loop when the host has a mesh instance service.
+- `receptor_type` is assumed stable for the life of a deployment. Changing it later (for example hybrid to control) may leave a stale `aap-instance-*` unit on disk until addressed manually or by a future role enhancement.
 
 
 
@@ -54,7 +59,6 @@ ansible-playbook -i inventory install_aap_service.yml -l exec1.example.com
 | `ansible_user`                                   | inventory                                   | Yes        | User that owns AAP Podman user units                                    |
 | `aap_validate_certs`                             | `true` (`false` in install playbook)        | No         | TLS verification for mesh API calls                                     |
 | `aap_instance_hostname`                          | `routable_hostname` or `inventory_hostname` | No         | Hostname of this instance in the controller mesh                        |
-| `aap_node_type`                                  | from inventory groups                       | No         | Override component type if needed                                       |
 | `aap_skip_units`                                 | `[]`                                        | No         | Skip container units (e.g. external `postgresql`)                       |
 | `aap_extra_start_units` / `aap_extra_stop_units` | `[]`                                        | No         | Extra units after/before profile lists                                  |
 | `aap_instance_ready_timeout_seconds`             | `600`                                       | No         | Wait for `node_state=ready` after mesh enable                           |
@@ -76,7 +80,7 @@ ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l aut
 | `aap_state` | Yes      | `started` or `stopped` |
 
 
-On `automationcontroller` and `execution_nodes`, `aap_state=stopped` runs mesh drain (`aap-instance-*`) only. Stop `aap-controller` or `aap-execution` manually after jobs finish. All other groups stop or start the component wrapper directly.
+On mesh hosts (`automationcontroller` and `execution_nodes`), `aap_state=stopped` runs mesh drain (`aap-instance-*`) only. Stop `aap-controller` or `aap-execution` manually after jobs finish. All other node types stop or start the component wrapper service directly. On colocated hosts, component wrapper services in `aap_node_types` follow `aap_manage_order` in the same playbook run.
 
 ### Uninstall
 
@@ -89,21 +93,21 @@ Removes wrapper units and scripts without running `ExecStop`. On Automation Mesh
 
 ## Maintenance
 
-Follow [Red Hat KCS 7124426](https://access.redhat.com/solutions/7124426) for platform-wide order. It is strongly recommended to run the `manage_aap_service.yml` once per component, in the following order.
+Follow [Red Hat KCS 7124426](https://access.redhat.com/solutions/7124426) for platform-wide order. Run `manage_aap_service.yml` once per inventory group in the following order. On colocated hosts (multiple groups on one server), one playbook run per host applies the same order across all component wrapper services on that host.
 
 
 | Step | Target                   | Wrapper / notes                                                                       |
 | ---- | ------------------------ | ------------------------------------------------------------------------------------- |
-| 1    | `automationgateway`      | `aap-gateway` — colocated `redis-unix` / `redis-tcp` stop last when present           |
-| 2    | `automationeda`          | `aap-eda` — colocated Redis stops last when present                                   |
+| 1    | `automationgateway`      | `aap-gateway` — `redis-unix` last when present (skipped on first gateway in standalone) |
+| 2    | `automationeda`          | `aap-eda` — `redis-unix` last when present                                            |
 | 3    | `execution_nodes`        | `aap-instance-execution` (drain), then `sudo systemctl stop aap-execution.service`    |
-| 4    | `automationcontroller`   | `aap-instance-controller` (drain), then `sudo systemctl stop aap-controller.service`  |
+| 4    | `automationcontroller`   | `aap-instance-hybrid` or `aap-instance-controller` (drain), then `sudo systemctl stop aap-controller.service` (and `aap-execution` on hybrid) |
 | 5    | `automationhub`          | `aap-hub`                                                                             |
-| 6    | `redis`                  | `aap-redis` — dedicated Redis hosts only                                              |
+| 6    | `redis`                  | `aap-redis` — `redis-tcp` only                                                          |
 | 7    | Controller with local DB | `sudo systemctl --user stop postgresql.service` — skip if external (`aap_skip_units`) |
 
 
-Restart in reverse order (step 7 → 1). On controller and execution hosts, a single `aap_state=started` playbook run starts `aap-<component>` first, then `aap-instance-*` (mesh re-enable).
+Restart in reverse order (step 7 → 1). On mesh hosts, a single `aap_state=started` playbook run starts component wrapper services first (in reverse platform order), then `aap-instance-*` (mesh re-enable).
 
 **Full stack**
 
@@ -157,9 +161,9 @@ sudo systemctl start aap-instance-execution.service
 ### Risks
 
 
-| Component                         | Playbook `stopped` alone? | Risk                                                                |
+| Node / mesh                       | Playbook `stopped` alone? | Risk                                                                |
 | --------------------------------- | ------------------------- | ------------------------------------------------------------------- |
-| Instance (controller / execution) | Yes                       | Low - drains mesh; does not stop container services                 |
+| Instance (controller / execution / hybrid) | Yes              | Low - drains mesh; does not stop container services                 |
 | Gateway                           | Yes                       | High - UI/API down; will break aap-instance-* service scripts       |
 | Controller / execution (local)    | Manual step required      | High — breaks job execution; drain jobs first                       |
 | Hub                               | Yes                       | Moderate - collection sync/publish and EE sync/publishing will fail |
@@ -171,7 +175,7 @@ sudo systemctl start aap-instance-execution.service
 
 ## Validation
 
-Check wrapper units with `-b` (root). Check containers as `ansible_user` (no `-b`).
+Check component wrapper service units with `-b` (root). Check containers as `ansible_user` (no `-b`).
 
 ```bash
 # Example: gateway group or single host
@@ -181,10 +185,10 @@ ansible -i inventory automationgateway -b -l gateway1.example.com -a "systemctl 
 ```
 
 
-| Group                  | Wrapper unit(s) to check                                    |
+| Group                  | Component wrapper service(s) to check                       |
 | ---------------------- | ----------------------------------------------------------- |
 | `automationgateway`    | `aap-gateway.service`                                       |
-| `automationcontroller` | `aap-controller.service`, `aap-instance-controller.service` |
+| `automationcontroller` | `aap-controller.service`, `aap-instance-hybrid.service` (or `aap-instance-controller` when `receptor_type=control`); hybrid hosts also have `aap-execution.service` |
 | `execution_nodes`      | `aap-execution.service`, `aap-instance-execution.service`   |
 | `automationhub`        | `aap-hub.service`                                           |
 | `automationeda`        | `aap-eda.service`                                           |
@@ -197,20 +201,41 @@ ansible -i inventory automationgateway -b -l gateway1.example.com -a "systemctl 
 
 
 
-### Inventory groups
+### Inventory groups and Redis
 
+`aap_node_types` is derived from all matching installer groups on the host. One component wrapper service is installed per type. Hosts in multiple groups get multiple entries (no duplicates).
 
-| Inventory group        | `aap_node_type` | Wrapper                                     |
-| ---------------------- | --------------- | ------------------------------------------- |
-| `automationcontroller` | `controller`    | `aap-controller`, `aap-instance-controller` |
-| `automationgateway`    | `gateway`       | `aap-gateway`                               |
-| `automationhub`        | `hub`           | `aap-hub`                                   |
-| `execution_nodes`      | `execution`     | `aap-execution`, `aap-instance-execution`   |
-| `automationeda`        | `eda`           | `aap-eda`                                   |
-| `redis`                | `redis`         | `aap-redis`                                 |
+| Inventory group        | Node type | Component wrapper service(s)                |
+| ---------------------- | -------------- | ------------------------------------------- |
+| `automationcontroller` | `controller`   | `aap-controller`, `aap-instance-hybrid` (default) or `aap-instance-controller` (`receptor_type=control`) |
+| `automationcontroller` | `execution`    | `aap-execution` (hybrid hosts only; `receptor` managed by `aap-controller`) |
+| `automationgateway`    | `gateway`      | `aap-gateway`                               |
+| `automationhub`        | `hub`          | `aap-hub`                                   |
+| `execution_nodes`      | `execution`    | `aap-execution`, `aap-instance-execution`   |
+| `automationeda`        | `eda`          | `aap-eda`                                   |
+| `redis`                | `redis`        | `aap-redis`                                 |
 
+**Redis units**
 
-Colocated centralized Redis (`redis-unix`, `redis-tcp`) is managed by `aap-gateway` or `aap-eda` when those unit files exist on the host (optional units — skipped when absent). Dedicated Redis VMs (defined using the `[redis]` group) use the dedicated `aap-redis` service. Local redis units (`redis-unix` ) are  managed by the standard `aap-*` service.
+| Unit        | Managed by                         | Notes |
+| ----------- | ---------------------------------- | ----- |
+| `redis-tcp` | `aap-redis` only                   | Centralized Redis; hosts in `[redis]` |
+| `redis-unix` | `aap-gateway`, `aap-controller`, `aap-eda`, `aap-hub` | Local Redis; optional when unit file is absent |
+
+- Standalone (empty or missing `[redis]` group): first host in `automationgateway` installs `aap-redis` automatically and skips `redis-unix` in `aap-gateway`.
+- Controller: `redis-unix` via `aap-controller`. If the host is also in `[redis]`, `aap-redis` manages `redis-tcp` separately.
+- Execution nodes and database hosts are not Redis hosts.
+
+### Colocated hosts
+
+Installer inventory can place multiple AAP roles on one server (for example `automationgateway` and `automationcontroller` on the same host). The role:
+
+- Builds `aap_node_types` from every matching group on that host.
+- Installs one component wrapper service (`aap-<node_type>`) per type, plus at most one mesh instance service (`aap-instance-*`) when applicable.
+- On hybrid controller hosts, installs `aap-controller` and `aap-execution` together; `aap-execution` does not manage `receptor` because `aap-controller` already does.
+- Rejects inventory where a host is in both `automationcontroller` and `execution_nodes` (each host should have one mesh role).
+
+`receptor_type` on `[automationcontroller]` hosts (`hybrid` or `control`) selects the mesh instance service name and whether `execution` is included in `aap_node_types`. It is expected to remain fixed after install.
 
 Set `aap_token` in `install_aap_service.yml` (vault or `-e`). `aap_validate_certs: false` is set in that playbook when the gateway certificate does not match inventory hostnames.
 

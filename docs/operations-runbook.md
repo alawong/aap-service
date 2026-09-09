@@ -1,6 +1,8 @@
 # Operations runbook
 
-Full-stack stop/start order for containerized deployments follows Red Hat [KCS 7124426](https://access.redhat.com/solutions/7124426). See [README - Usage](../README.md#usage) for playbook workflows.
+Full-stack stop/start order for containerized deployments follows Red Hat [KCS 7124426](https://access.redhat.com/solutions/7124426). See [README - Maintenance](../README.md#maintenance) for playbook workflows.
+
+When multiple AAP roles share one server, a single `manage_aap_service.yml` run on that host stops or starts every component wrapper service in platform order. Mesh drain/start runs once when the host has an `aap-instance-*` mesh instance service.
 
 ## Install
 
@@ -22,7 +24,6 @@ On a single node:
 
 ```bash
 sudo systemctl stop aap-instance-execution.service
-```
 ```
 
 ## Stop local services only
@@ -67,7 +68,7 @@ ansible-playbook -i inventory manage_aap_service.yml \
 
 ## Validation
 
-See [README - Validation](../README.md#validation) for `ansible -i inventory <group> -b -a "systemctl status ..."` and `podman ps -a` commands per component.
+See [README - Validation](../README.md#validation) for `ansible -i inventory <group> -b -a "systemctl status ..."` and `podman ps -a` commands per component wrapper service. Colocated hosts may have several `aap-*.service` units on one server.
 
 ## Skip external database on controller
 

@@ -1,5 +1,5 @@
 ---
-# Uninstall aap-instance-<component> and aap-<component> system services.
+# Uninstall mesh instance services (aap-instance-*) and component wrapper services (aap-<node_type>).
 #
 # Usage:
 #   ansible-playbook -i inventory uninstall_aap_service.yml

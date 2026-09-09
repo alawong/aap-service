@@ -1,28 +1,13 @@
 ---
-- name: Validate node type is supported
-  ansible.builtin.import_tasks: 
-    file: validate.yml
+- name: Validate host
+  ansible.builtin.import_tasks: validate.yml
 
-- name: Install mesh instance services
-  ansible.builtin.import_tasks: 
-    file: mesh.yml
-  when: aap_node_type in aap_mesh_node_types
+- name: Install mesh services
+  ansible.builtin.import_tasks: mesh.yml
+  when: aap_mesh_instance_type | length > 0
 
-- name: Install component lifecycle script
-  ansible.builtin.template:
-    src: aap-component.py.j2
-    dest: "/usr/local/bin/aap-{{ aap_node_type }}"
-    mode: "0755"
-
-- name: Install component systemd unit
-  ansible.builtin.template:
-    src: aap-component.service.j2
-    dest: "/etc/systemd/system/aap-{{ aap_node_type }}.service"
-    mode: "0644"
-
-- name: Enable and start component service
-  ansible.builtin.systemd:
-    name: "aap-{{ aap_node_type }}.service"
-    enabled: true
-    state: started
-    daemon_reload: true
+- name: Install node services
+  ansible.builtin.include_tasks: install_node.yml
+  loop: "{{ aap_node_types }}"
+  loop_control:
+    loop_var: aap_node_type

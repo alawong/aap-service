@@ -1,0 +1,7 @@
+---
+- name: Manage mesh instance service state
+  ansible.builtin.systemd:
+    name: "aap-instance-{{ aap_mesh_instance_type }}.service"
+    state: "{{ aap_mesh_desired_state }}"
+    enabled: "{{ aap_mesh_desired_state == 'started' }}"
+    daemon_reload: true

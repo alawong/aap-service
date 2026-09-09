@@ -1,34 +1,37 @@
 ---
-- name: Validate node type is supported
-  ansible.builtin.import_tasks: 
-    file: validate.yml
+- name: Validate host
+  ansible.builtin.import_tasks: validate.yml
 
-- name: Stop instance mesh service
-  ansible.builtin.systemd:
-    name: "aap-instance-{{ aap_node_type }}.service"
-    state: "{{ aap_state }}"
-    enabled: "{{ aap_state == 'started' }}"
-    daemon_reload: true
+- name: Stop mesh instance services
+  ansible.builtin.include_tasks: mesh_manage.yml
+  vars:
+    aap_mesh_desired_state: stopped
   when:
-    - aap_node_type in aap_mesh_node_types
+    - aap_mesh_instance_type | length > 0
     - aap_state == 'stopped'
 
-- name: Manage component service state
+- name: Manage node service state
   ansible.builtin.systemd:
     name: "aap-{{ aap_node_type }}.service"
     state: "{{ aap_state }}"
     enabled: "{{ aap_state == 'started' }}"
     daemon_reload: true
+  loop: >-
+    {{
+      (aap_manage_order | intersect(aap_node_types) | reverse)
+      if aap_state == 'started'
+      else (aap_manage_order | intersect(aap_node_types))
+    }}
+  loop_control:
+    loop_var: aap_node_type
   when: >-
     not (aap_state == 'stopped'
     and aap_node_type in aap_mesh_node_types)
 
-- name: Start instance mesh service
-  ansible.builtin.systemd:
-    name: "aap-instance-{{ aap_node_type }}.service"
-    state: "{{ aap_state }}"
-    enabled: "{{ aap_state == 'started' }}"
-    daemon_reload: true
+- name: Start mesh instance services
+  ansible.builtin.include_tasks: mesh_manage.yml
+  vars:
+    aap_mesh_desired_state: started
   when:
-    - aap_node_type in aap_mesh_node_types
+    - aap_mesh_instance_type | length > 0
     - aap_state == 'started'

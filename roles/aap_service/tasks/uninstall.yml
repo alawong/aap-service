@@ -1,35 +1,40 @@
 ---
-- name: Validate node type is supported
-  ansible.builtin.import_tasks: 
-    file: validate.yml
+- name: Validate host
+  ansible.builtin.import_tasks: validate.yml
 
-- name: Remove mesh instance services
-  when: aap_node_type in aap_mesh_node_types
-  block:
-    - name: Remove instance systemd unit
-      ansible.builtin.file:
-        path: "/etc/systemd/system/aap-instance-{{ aap_node_type }}.service"
-        state: absent
-
-    - name: Remove instance script
-      ansible.builtin.file:
-        path: "/usr/local/bin/aap-instance-{{ aap_node_type }}"
-        state: absent
-
-    - name: Remove encrypted API token
-      ansible.builtin.file:
-        path: /etc/credstore.encrypted/aap_token
-        state: absent
-
-- name: Remove component systemd unit
+- name: Remove node systemd unit
   ansible.builtin.file:
     path: "/etc/systemd/system/aap-{{ aap_node_type }}.service"
     state: absent
+  loop: "{{ aap_node_types }}"
+  loop_control:
+    loop_var: aap_node_type
 
-- name: Remove component script
+- name: Remove node script
   ansible.builtin.file:
     path: "/usr/local/bin/aap-{{ aap_node_type }}"
     state: absent
+  loop: "{{ aap_node_types }}"
+  loop_control:
+    loop_var: aap_node_type
+
+- name: Remove instance systemd unit
+  ansible.builtin.file:
+    path: "/etc/systemd/system/aap-instance-{{ aap_mesh_instance_type }}.service"
+    state: absent
+  when: aap_mesh_instance_type | length > 0
+
+- name: Remove instance script
+  ansible.builtin.file:
+    path: "/usr/local/bin/aap-instance-{{ aap_mesh_instance_type }}"
+    state: absent
+  when: aap_mesh_instance_type | length > 0
+
+- name: Remove encrypted API token
+  ansible.builtin.file:
+    path: /etc/credstore.encrypted/aap_token
+    state: absent
+  when: aap_mesh_instance_type | length > 0
 
 - name: Reload systemd
   ansible.builtin.systemd:

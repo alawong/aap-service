@@ -2,7 +2,7 @@
 galaxy_info:
   role_name: aap_service
   author: Alan Wong (alawong@redhat.com)
-  description: Install and manage system-scoped aap-instance-<component> and aap-<component> lifecycle services on containerized AAP 2.6 nodes.
+  description: Install and manage mesh instance services (aap-instance-*) and component wrapper services (aap-<node_type>) on containerized AAP 2.6 nodes.
   license: proprietary
   min_ansible_version: "2.14"
   platforms:

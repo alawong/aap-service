@@ -1,11 +1,35 @@
 ---
-- name: Validate node type is supported
+- name: Validate ansible_user is explicitly defined in inventory or playbook
   ansible.builtin.assert:
     that:
-      - aap_node_type is defined
-      - aap_node_type in aap_inventory_group_map.values() | list
+      - ansible_user is defined
+      - ansible_user | trim | length > 0
+      - >-
+        'ansible_user' in hostvars[inventory_hostname]
+        or 'ansible_user' in vars
     fail_msg: >-
-      Could not determine aap_node_type from installer inventory groups
+      Set ansible_user in inventory ([all:vars] or per-host) or in playbook vars.
+      Component wrapper services require the AAP install user for systemctl --user.
+      A remote_user default from ansible.cfg alone is not sufficient.
+
+- name: Validate node types are supported
+  ansible.builtin.assert:
+    that:
+      - aap_node_types | length > 0
+      - aap_node_types | difference(aap_inventory_group_map.values() | list) | length == 0
+    fail_msg: >-
+      Could not determine node types from installer inventory groups
       (automationcontroller, automationgateway, automationhub, execution_nodes,
       automationeda, redis).
-      Set aap_node_type on the host or exclude database hosts.
+      Exclude database hosts or set host group membership explicitly.
+
+- name: Validate host is not in both controller and execution inventory groups
+  ansible.builtin.assert:
+    that:
+      - not (
+          'automationcontroller' in group_names
+          and 'execution_nodes' in group_names
+        )
+    fail_msg: >-
+      Host is in both automationcontroller and execution_nodes.
+      AAP inventory assigns each host to one mesh role only.
