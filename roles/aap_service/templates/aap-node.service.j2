@@ -8,7 +8,13 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/bin/aap-{{ aap_node_type }} start
 ExecStop=/usr/local/bin/aap-{{ aap_node_type }} stop
+{% if aap_node_type == 'redis' %}
+TimeoutStartSec={{ aap_redis_ready_timeout_seconds | int + 60 }}
+{# Allow up to 3 replica failover attempts before unit stop work #}
+TimeoutStopSec={{ (aap_redis_failover_timeout_seconds | int * 3) + 600 }}
+{% else %}
 TimeoutStopSec=600
+{% endif %}
 
 [Install]
 WantedBy=multi-user.target

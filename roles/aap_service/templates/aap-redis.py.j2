@@ -1,0 +1,221 @@
+def redis_cli(command, host=None, port=None):
+    """Run redis-cli inside redis-tcp as ansible_user (TLS).
+
+    Returns CompletedProcess. Pass host (and optional port, default 6379) to
+    target another cluster node on the Redis client port — not the cluster bus
+    port (@16379 in CLUSTER NODES).
+    """
+    uid, _, env = aap_context()
+
+    cmd = [
+        "podman",
+        "exec",
+        REDIS_CONTAINER,
+        "redis-cli",
+        "--tls",
+        "--cert",
+        REDIS_TLS_CERT,
+        "--key",
+        REDIS_TLS_KEY,
+    ]
+    if host:
+        cmd.extend(["-h", host, "-p", str(6379 if port is None else port)])
+    cmd.extend(shlex.split(command))
+    LOG.debug("Running as %s: %s", AAP_USER, " ".join(cmd))
+
+    try:
+        return subprocess.run(
+            cmd, env=env, user=uid, group=uid, capture_output=True, text=True, check=True
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip()
+        raise RuntimeError(
+            "redis-cli %r failed (rc=%s)%s"
+            % (command, exc.returncode, (": " + detail) if detail else "")
+        ) from None
+
+
+def get_available_replicas():
+    """Replicas that are cluster-connected and answer TLS PING."""
+    my_id = redis_cli("CLUSTER MYID").stdout.strip()
+    replicas = []
+
+    for line in redis_cli("CLUSTER REPLICAS %s" % my_id).stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 8:
+            LOG.debug("Skipping CLUSTER REPLICAS line (too few fields): %s", line)
+            continue
+        if "fail" in fields[2] or "noaddr" in fields[2]:
+            LOG.debug("Skipping replica %s (flags=%s)", fields[1], fields[2])
+            continue
+        if fields[7] != "connected":
+            LOG.debug(
+                "Skipping replica %s (link-state=%s)", fields[1], fields[7]
+            )
+            continue
+
+        addr = fields[1]
+        if addr == ":0@0" or not addr or addr.startswith(":"):
+            LOG.debug("Skipping replica with unusable address: %s", addr)
+            continue
+
+        # ip:6379@16379 — use client port 6379, ignore cluster bus port
+        ip_port = addr.split("@", 1)[0]
+        if "," in ip_port:
+            ip_port = ip_port.split(",")[-1]
+        if ":" not in ip_port:
+            LOG.debug("Skipping replica address without port: %s", addr)
+            continue
+
+        ip, port_s = ip_port.rsplit(":", 1)
+        if not (ip and port_s.isdigit()):
+            LOG.debug("Skipping replica address parse failure: %s", addr)
+            continue
+        port = int(port_s)
+
+        try:
+            if redis_cli("PING", host=ip, port=port).stdout.strip().upper() != "PONG":
+                LOG.warning("Replica %s:%s connected but PING failed; skipping", ip, port)
+                continue
+        except RuntimeError as exc:
+            LOG.warning("Replica %s:%s not available (PING): %s", ip, port, exc)
+            continue
+
+        replicas.append((ip, port))
+
+    return replicas
+
+
+def is_connected():
+    """True if CLUSTER NODES shows myself connected with no fail flag."""
+    try:
+        result = redis_cli("CLUSTER NODES")
+    except RuntimeError as exc:
+        LOG.info("Redis cluster not connected: %s", exc)
+        return False
+
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 8 or "myself" not in fields[2]:
+            continue
+        flags = fields[2]
+        if "fail" in flags:
+            LOG.info("Redis cluster not connected: myself has fail flag: %s", flags)
+            return False
+        if fields[7] != "connected":
+            LOG.info("Redis cluster not connected: myself link-state is %s", fields[7])
+            return False
+        return True
+
+    LOG.info("Redis cluster not connected: myself not found in CLUSTER NODES")
+    return False
+
+
+def is_active():
+    """True if the redis-tcp unit file exists and the unit is active/activating."""
+    if not unit_exists(REDIS_CONTAINER):
+        return False
+
+    active = systemctl(["is-active", REDIS_CONTAINER], check=False).stdout.strip()
+    return active in ("active", "activating")
+
+
+def is_primary():
+    """True if local redis-tcp ROLE is master."""
+    text = redis_cli("ROLE").stdout.strip()
+    if not text:
+        raise RuntimeError("Empty ROLE response from local redis-tcp")
+
+    role = text.splitlines()[0].strip().lower()
+    if role not in ("master", "slave"):
+        raise RuntimeError("Unexpected ROLE from local redis-tcp: %s" % role)
+    return role == "master"
+
+
+def failover_replica():
+    """Fail over this primary to a replica; try each available replica until demoted."""
+    if not is_primary():
+        LOG.info("Local redis-tcp is no longer primary; skipping CLUSTER FAILOVER")
+        return
+
+    replicas = get_available_replicas()
+    if not replicas:
+        raise RuntimeError(
+            "Redis node is primary but has no available connected replica for CLUSTER FAILOVER"
+        )
+
+    LOG.info("Failover targets: %s", ", ".join("%s:%s" % r for r in replicas))
+    failures = []
+    for ip, port in replicas:
+        LOG.info("Failing over Redis primary to replica %s:%s", ip, port)
+        try:
+            redis_cli("CLUSTER FAILOVER", host=ip, port=port)
+        except RuntimeError as exc:
+            LOG.warning("CLUSTER FAILOVER to %s:%s failed: %s", ip, port, exc)
+            failures.append("%s:%s: %s" % (ip, port, exc))
+            continue
+
+        deadline = time.time() + REDIS_FAILOVER_TIMEOUT
+        while time.time() < deadline:
+            try:
+                if not is_primary():
+                    LOG.info("Failover complete: local demoted (target was %s:%s)", ip, port)
+                    return
+            except RuntimeError as exc:
+                LOG.debug("Waiting for failover: local ROLE check failed: %s", exc)
+                time.sleep(REDIS_FAILOVER_POLL)
+                continue
+
+            LOG.debug("Waiting for failover: still primary (target %s:%s)", ip, port)
+            time.sleep(REDIS_FAILOVER_POLL)
+
+        msg = "timed out after %ss waiting for failover to %s:%s" % (
+            REDIS_FAILOVER_TIMEOUT,
+            ip,
+            port,
+        )
+        LOG.warning(msg)
+        failures.append(msg)
+
+    raise RuntimeError(
+        "Redis failover failed after trying %s replica(s): %s"
+        % (len(replicas), "; ".join(failures))
+    )
+
+
+def wait_until_connected():
+    """After start: wait until PING succeeds and this cluster node is connected."""
+    LOG.info(
+        "Waiting up to %ss for redis-tcp PING and cluster connected",
+        REDIS_READY_TIMEOUT,
+    )
+    deadline = time.time() + REDIS_READY_TIMEOUT
+    last = "PING not attempted yet"
+
+    while time.time() < deadline:
+        try:
+            ping = redis_cli("PING")
+        except RuntimeError as exc:
+            last = str(exc)
+            LOG.debug("Waiting for redis-tcp ready: %s", last)
+            time.sleep(REDIS_READY_POLL)
+            continue
+
+        if ping.stdout.strip().upper() != "PONG":
+            last = ping.stdout.strip() or "PING did not return PONG"
+            LOG.debug("Waiting for redis-tcp ready: %s", last)
+            time.sleep(REDIS_READY_POLL)
+            continue
+
+        if is_connected():
+            LOG.info("Redis cluster node is connected")
+            return
+
+        last = "PING ok; cluster node not connected"
+        # is_connected() already logged the reason at INFO
+        time.sleep(REDIS_READY_POLL)
+
+    raise RuntimeError(
+        "Timed out after %ss waiting for redis-tcp to become ready/connected. "
+        "Last status: %s" % (REDIS_READY_TIMEOUT, last)
+    )

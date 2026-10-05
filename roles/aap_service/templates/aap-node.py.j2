@@ -26,6 +26,10 @@ import os
 import pwd
 import subprocess
 import sys
+{% if aap_node_type == 'redis' %}
+import shlex
+import time
+{% endif %}
 
 _CONFIG = json.loads("""{{ aap_node_config | to_json }}""")
 NODE_TYPE = _CONFIG["node_type"]
@@ -39,6 +43,16 @@ SKIP_UNITS = _CONFIG["skip_units"]
 EXECUTION_PLANE = {{ 'True' if _profile.execution_plane else 'False' }}
 LOG = logging.getLogger(SERVICE_NAME)
 VALID_ACTIONS = ("start", "stop")
+{% if aap_node_type == 'redis' %}
+REDIS_CONTAINER = "redis-tcp"
+REDIS_FAILOVER_TIMEOUT = {{ aap_redis_failover_timeout_seconds | int }}
+REDIS_FAILOVER_POLL = {{ aap_redis_failover_poll_seconds | int }}
+REDIS_READY_TIMEOUT = {{ aap_redis_ready_timeout_seconds | int }}
+REDIS_READY_POLL = {{ aap_redis_ready_poll_seconds | int }}
+# Paths inside the redis-tcp container (AAP mounts; TLS-only listener).
+REDIS_TLS_CERT = "/var/lib/redis/server.crt"
+REDIS_TLS_KEY = "/var/lib/redis/server.key"
+{% endif %}
 
 
 def setup_logging():
@@ -161,22 +175,40 @@ def stop_units():
     if failed:
         raise RuntimeError("Failed to stop systemd units: %s" % ", ".join(failed))
 
+{% if aap_node_type == 'redis' %}
+{% include 'aap-redis.py.j2' %}
+{% endif %}
 
 def main():
     setup_logging()
-    action = parse_action()
+    try:
+        action = parse_action()
 
-    if action == "start":
-        start_units()
-        print("started")
-        return 0
+        if action == "start":
+            start_units()
+{% if aap_node_type == 'redis' %}
+            wait_until_connected()
+{% endif %}
+            print("started")
+            return 0
 
-    if action == "stop":
-        stop_units()
-        print("stopped")
-        return 0
+        if action == "stop":
+{% if aap_node_type == 'redis' %}
+            if not is_active():
+                LOG.info("redis-tcp not active; skipping failover")
+            elif not is_primary():
+                LOG.info("redis-tcp is not primary; skipping failover")
+            else:
+                failover_replica()
+{% endif %}
+            stop_units()
+            print("stopped")
+            return 0
 
-    return 1
+        return 1
+    except Exception as exc:
+        LOG.error("%s", exc)
+        return 1
 
 
 if __name__ == "__main__":

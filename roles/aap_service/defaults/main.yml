@@ -72,7 +72,6 @@ aap_services:
     - automation-gateway
     - automation-gateway-proxy
   controller:
-    - postgresql
     - redis-unix
     - automation-controller-task
     - automation-controller-web
@@ -107,7 +106,6 @@ aap_stop_services:
     - receptor
     - automation-controller-rsyslog
     - redis-unix
-    - postgresql
   eda:
     - automation-eda-api
     - automation-eda-daphne
@@ -137,7 +135,6 @@ aap_profiles:
   controller:
     execution_plane: true
     optional_units:
-      - postgresql
       - redis-unix
     discover_patterns: []
   execution:
@@ -168,3 +165,9 @@ aap_profiles:
 aap_skip_units: []
 aap_extra_start_units: []
 aap_extra_stop_units: []
+
+# aap-redis: cluster failover before stop; wait until connected after start
+aap_redis_failover_timeout_seconds: 60
+aap_redis_failover_poll_seconds: 3
+aap_redis_ready_timeout_seconds: 120
+aap_redis_ready_poll_seconds: 3

@@ -59,10 +59,14 @@ ansible-playbook -i inventory install_aap_service.yml -l exec1.example.com
 | `ansible_user`                                   | inventory                                   | Yes        | User that owns AAP Podman user units                                    |
 | `aap_validate_certs`                             | `true` (`false` in install playbook)        | No         | TLS verification for mesh API calls                                     |
 | `aap_instance_hostname`                          | `routable_hostname` or `inventory_hostname` | No         | Hostname of this instance in the controller mesh                        |
-| `aap_skip_units`                                 | `[]`                                        | No         | Skip container units (e.g. external `postgresql`)                       |
+| `aap_skip_units`                                 | `[]`                                        | No         | Skip container units (e.g. optional `redis-unix`)                       |
 | `aap_extra_start_units` / `aap_extra_stop_units` | `[]`                                        | No         | Extra units after/before profile lists                                  |
 | `aap_instance_ready_timeout_seconds`             | `600`                                       | No         | Wait for `node_state=ready` after mesh enable                           |
 | `aap_instance_ready_poll_seconds`                | `15`                                        | No         | Poll interval while waiting for ready                                   |
+| `aap_redis_failover_timeout_seconds`             | `60`                                        | No         | Wait for primary demotion after `CLUSTER FAILOVER`                      |
+| `aap_redis_failover_poll_seconds`                | `3`                                         | No         | Poll interval during Redis failover wait                                |
+| `aap_redis_ready_timeout_seconds`                | `120`                                       | No         | Wait for Redis PING / cluster connected after start                     |
+| `aap_redis_ready_poll_seconds`                   | `3`                                         | No         | Poll interval while waiting for Redis ready                             |
 
 
 
@@ -103,8 +107,8 @@ Follow [Red Hat KCS 7124426](https://access.redhat.com/solutions/7124426) for pl
 | 3    | `execution_nodes`        | `aap-instance-execution` (drain), then `sudo systemctl stop aap-execution.service`    |
 | 4    | `automationcontroller`   | `aap-instance-hybrid` or `aap-instance-controller` (drain), then `sudo systemctl stop aap-controller.service` (and `aap-execution` on hybrid) |
 | 5    | `automationhub`          | `aap-hub`                                                                             |
-| 6    | `redis`                  | `aap-redis` — `redis-tcp` only                                                          |
-| 7    | Controller with local DB | `sudo systemctl --user stop postgresql.service` — skip if external (`aap_skip_units`) |
+| 6    | `redis`                  | `aap-redis` — `redis-tcp` only. For rolling OS patch use one host at a time (see below); `-l redis` stops the whole group |
+| 7    | Controller with local DB | Manual only: `sudo systemctl --user stop postgresql.service` (not managed by any `aap-*` wrapper) |
 
 
 Restart in reverse order (step 7 → 1). On mesh hosts, a single `aap_state=started` playbook run starts component wrapper services first (in reverse platform order), then `aap-instance-*` (mesh re-enable).
@@ -125,6 +129,8 @@ ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l aut
 ansible -i inventory automationcontroller -b -a "systemctl stop aap-controller.service"
 
 ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l automationhub
+# Full-stack only (apps already down): may stop all redis hosts together.
+# Prefer one host at a time if any redis traffic remains.
 ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l redis
 # sudo systemctl --user stop postgresql.service  # if local DB
 
@@ -134,6 +140,7 @@ ansible-playbook -i inventory maintain_aap.yml
 # Start AAP services up again (7 - 1)
 # sudo systemctl --user start postgresql.service  # if local DB
 ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l redis
+# Or start redis one host at a time to match a rolling stop
 ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l automationhub
 ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l automationcontroller
 ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l execution_nodes
@@ -226,6 +233,31 @@ ansible -i inventory automationgateway -b -l gateway1.example.com -a "systemctl 
 - Controller: `redis-unix` via `aap-controller`. If the host is also in `[redis]`, `aap-redis` manages `redis-tcp` separately.
 - Execution nodes and database hosts are not Redis hosts.
 
+**`aap-redis` start/stop behaviour** (assumes `redis_mode=cluster`)
+
+| Action | Replica | Primary |
+| ------ | ------- | ------- |
+| `stop` | Stop `redis-tcp` | Preflight: require a cluster-`connected` replica that answers `PING`; then `CLUSTER FAILOVER` to each such replica until demoted, then stop |
+| `start` | Start `redis-tcp`, wait for `PING` and `CLUSTER NODES` `myself` with link `connected` and no `fail` flag | Same |
+
+Failover/ready waits use role defaults: `aap_redis_failover_timeout_seconds` (60), `aap_redis_failover_poll_seconds` (3), `aap_redis_ready_timeout_seconds` (120), `aap_redis_ready_poll_seconds` (3). Before failover, `aap-redis` requires at least one replica that is `connected` in `CLUSTER REPLICAS` and answers TLS `PING`. If `CLUSTER FAILOVER` or the demotion wait fails for one replica, it tries the next preflight-passed replica. If none are usable or all attempts fail, stop fails and `redis-tcp` is left running. Transient `ROLE` failures during the wait are retried until the failover timeout. `CLUSTER NODES` addresses look like `ip:6379@16379`; failover targets the Redis client port (`6379`), not the cluster bus port (`16379`). `podman exec` / `redis-cli` run as `ansible_user` even though the wrapper unit is root. `redis-cli` always uses TLS with the container-mounted `server.crt` / `server.key`, matching AAP’s TLS-only Redis listener. Standalone Redis is out of scope for `aap-redis`.
+
+**Rolling Redis OS patch** (AAP may stay up; one host at a time)
+
+1. Stop / patch / start each **replica** first (`systemctl stop aap-redis` on that host only).
+2. Confirm the replica is back (`active`, cluster connected, `ROLE` slave) before the next host.
+3. Then stop / patch / start each **primary** the same way. Preflight requires its replica to be connected and reachable; otherwise stop refuses and leaves `redis-tcp` running.
+4. Do not run `manage_aap_service.yml -l redis` for rolling patch — that targets the whole `[redis]` group and can stop multiple nodes together.
+
+```bash
+ansible -i inventory <redis-host> -b -a "systemctl stop aap-redis"
+# patch / reboot as required
+ansible -i inventory <redis-host> -b -a "systemctl start aap-redis"
+ansible -i inventory <redis-host> -b -a "systemctl status aap-redis --no-pager"
+```
+
+After failover, which node is primary for a shard may change; restoring a preferred topology is a separate ops step if needed.
+
 ### Colocated hosts
 
 Installer inventory can place multiple AAP roles on one server (for example `automationgateway` and `automationcontroller` on the same host). The role:
@@ -238,13 +270,6 @@ Installer inventory can place multiple AAP roles on one server (for example `aut
 `receptor_type` on `[automationcontroller]` hosts (`hybrid` or `control`) selects the mesh instance service name and whether `execution` is included in `aap_node_types`. It is expected to remain fixed after install.
 
 Set `aap_token` in `install_aap_service.yml` (vault or `-e`). `aap_validate_certs: false` is set in that playbook when the gateway certificate does not match inventory hostnames.
-
-Skip external database on the controller:
-
-```yaml
-aap_skip_units:
-  - postgresql
-```
 
 All defaults: `roles/aap_service/defaults/main.yml`.
 
@@ -266,6 +291,7 @@ roles/
   aap_service/
 docs/
   systemd/              # reference units (deployed from role templates)
+  scripts/aap-redis.py  # example render of aap-redis (review only)
   architecture.md
   operations-runbook.md
 ```

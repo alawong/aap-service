@@ -66,13 +66,20 @@ ansible-playbook -i inventory manage_aap_service.yml \
   -l exec1.example.com
 ```
 
+## Rolling Redis OS patch
+
+Keep AAP up if required. Work **one** `[redis]` host at a time: replicas first, then primaries. Bring each host back before the next.
+
+```bash
+ansible -i inventory <redis-host> -b -a "systemctl stop aap-redis"
+# patch / reboot
+ansible -i inventory <redis-host> -b -a "systemctl start aap-redis"
+```
+
+On primary stop, `aap-redis` failovers only if a connected replica answers `PING`; otherwise stop fails and `redis-tcp` stays up. Do not use `-l redis` for rolling work (that can stop the whole group). Details: [README — aap-redis](../README.md).
+
+Local DB (`postgresql`) is never started/stopped by wrappers — do that manually when needed.
+
 ## Validation
 
 See [README - Validation](../README.md#validation) for `ansible -i inventory <group> -b -a "systemctl status ..."` and `podman ps -a` commands per component wrapper service. Colocated hosts may have several `aap-*.service` units on one server.
-
-## Skip external database on controller
-
-```yaml
-aap_skip_units:
-  - postgresql
-```

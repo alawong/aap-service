@@ -1,1 +1,3 @@
 inventory
+ansible.cfg
+docs/scripts/__pycache__

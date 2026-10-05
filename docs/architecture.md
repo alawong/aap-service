@@ -79,7 +79,7 @@ Gateway, hub, EDA, and dedicated Redis hosts only run the component wrapper serv
 | `/usr/local/bin/aap-execution` | `start` · `stop` |
 | `/usr/local/bin/aap-eda` | `start` · `stop` |
 | `/usr/local/bin/aap-hub` | `start` · `stop` |
-| `/usr/local/bin/aap-redis` | `start` · `stop` |
+| `/usr/local/bin/aap-redis` | `start` (wait until PING + cluster connected) · `stop` (primary: preflight + `CLUSTER FAILOVER`, then stop `redis-tcp`) |
 
 System unit example (`/etc/systemd/system/aap-execution.service`):
 
@@ -103,4 +103,4 @@ Static reference copies are in `docs/systemd/`. The install role deploys from `r
 
 ## Node profiles
 
-Unit lists for component wrapper services are in `aap_services` in role defaults. Stop order uses `aap_stop_services` when defined, otherwise `reverse(start)`. `redis-tcp` is only in the `redis` profile. `redis-unix` is optional on gateway, controller, eda, and hub. **aap-instance-*** services install once per host as `aap_mesh_instance_type` (`hybrid`, `controller`, or `execution`), derived from inventory group and `receptor_type`.
+Unit lists for component wrapper services are in `aap_services` in role defaults. Stop order uses `aap_stop_services` when defined, otherwise `reverse(start)`. `postgresql` is not managed by any wrapper — start and stop it manually when using a local DB. `redis-tcp` is only in the `redis` profile; on primary stop, `aap-redis` failovers only when a cluster-`connected` replica answers TLS `PING`, otherwise stop fails and leaves `redis-tcp` running. `redis-unix` is optional on gateway, controller, eda, and hub. **aap-instance-*** services install once per host as `aap_mesh_instance_type` (`hybrid`, `controller`, or `execution`), derived from inventory group and `receptor_type`. See [README — aap-redis](../README.md) for rolling OS patch guidance (one host at a time).
