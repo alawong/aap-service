@@ -11,9 +11,9 @@ import os
 import pwd
 import subprocess
 import sys
+import time
 
 import shlex
-import time
 
 
 _CONFIG = json.loads("""{"node_type": "redis", "user": "ec2-user", "start_units": ["redis-tcp"], "stop_units": ["redis-tcp"], "optional_units": [], "discover_patterns": [], "skip_units": []}""")
@@ -71,9 +71,21 @@ def systemctl(args, check=True):
     cmd = ["systemctl", "--user"] + args
     LOG.debug("Running as %s: %s", AAP_USER, " ".join(cmd))
 
-    return subprocess.run(
-        cmd, env=env, user=uid, group=uid, capture_output=True, text=True, check=check
+    result = subprocess.run(
+        cmd, env=env, user=uid, group=uid, capture_output=True, text=True, check=False
     )
+    if check and result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(
+            "systemctl --user %s failed as %s (rc=%s)%s"
+            % (
+                " ".join(args),
+                AAP_USER,
+                result.returncode,
+                (": " + detail) if detail else "",
+            )
+        )
+    return result
 
 
 def unit_path(name):
@@ -131,9 +143,22 @@ def resolve_units(ordered):
 
 
 def start_units():
+    attempts = 5
     for unit in resolve_units(START_UNITS):
         LOG.info("Starting %s", unit)
-        systemctl(["start", unit])
+        for attempt in range(1, attempts + 1):
+            try:
+                systemctl(["start", unit])
+                break
+            except RuntimeError as exc:
+                if attempt == attempts:
+                    raise RuntimeError(
+                        "Failed to start %s after %s attempts: %s" % (unit, attempts, exc)
+                    ) from None
+                LOG.warning(
+                    "Start %s failed (attempt %s/%s): %s", unit, attempt, attempts, exc
+                )
+                time.sleep(2)
 
 
 def stop_units():

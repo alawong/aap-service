@@ -1,6 +1,7 @@
 [Unit]
 Description=AAP {{ aap_node_type }} local lifecycle (container systemd units)
-After=network-online.target
+After=network-online.target user@{{ aap_user_uid }}.service
+Requires=user@{{ aap_user_uid }}.service
 Wants=network-online.target
 
 [Service]
@@ -10,9 +11,9 @@ ExecStart=/usr/local/bin/aap-{{ aap_node_type }} start
 ExecStop=/usr/local/bin/aap-{{ aap_node_type }} stop
 {% if aap_node_type == 'redis' %}
 TimeoutStartSec={{ aap_redis_ready_timeout_seconds | int + 60 }}
-{# Allow up to 3 replica failover attempts before unit stop work #}
 TimeoutStopSec={{ (aap_redis_failover_timeout_seconds | int * 3) + 600 }}
 {% else %}
+TimeoutStartSec=300
 TimeoutStopSec=600
 {% endif %}
 

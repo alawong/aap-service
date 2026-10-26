@@ -1,0 +1,19 @@
+# Reference system unit - deployed to /etc/systemd/system/aap-redis.service
+# Runs as root; script delegates systemctl --user to inventory ansible_user.
+# user@UID.service: UID is ansible_user numeric id (set at install via getent).
+[Unit]
+Description=AAP redis local lifecycle (container systemd units)
+After=network-online.target user@UID.service
+Requires=user@UID.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/aap-redis start
+ExecStop=/usr/local/bin/aap-redis stop
+TimeoutStartSec=180
+TimeoutStopSec=780
+
+[Install]
+WantedBy=multi-user.target

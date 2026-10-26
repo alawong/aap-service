@@ -2,6 +2,15 @@
 - name: Validate host
   ansible.builtin.import_tasks: validate.yml
 
+- name: Resolve AAP install user UID
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ ansible_user }}"
+
+- name: Set aap_user_uid for node unit dependencies
+  ansible.builtin.set_fact:
+    aap_user_uid: "{{ getent_passwd[ansible_user][1] }}"
+
 - name: Install mesh services
   ansible.builtin.import_tasks: mesh.yml
   when: aap_mesh_instance_type | length > 0

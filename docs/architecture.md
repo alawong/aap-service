@@ -39,8 +39,6 @@ A single server may belong to more than one installer inventory group. The role 
 | `execution_nodes` | `aap-execution` | `aap-instance-execution` |
 | `automationgateway` + `automationcontroller` | `aap-gateway`, `aap-controller`, … | per controller / execution rules above |
 
-`manage_aap_service.yml` applies Red Hat platform stop/start order (`aap_manage_order`) across every component wrapper service on the host in one run. Mesh drain/start runs once before and after that loop when `aap_mesh_instance_type` is set.
-
 Inventory validation fails if a host is in both `automationcontroller` and `execution_nodes`.
 
 ## API credentials
@@ -49,23 +47,22 @@ Inventory validation fails if a host is in both `automationcontroller` and `exec
 
 ## Stop order
 
-When `aap_state=stopped` on mesh hosts (`automationcontroller` / `execution_nodes`):
+Mesh hosts (`automationcontroller` / `execution_nodes`):
 
-1. `aap-instance-hybrid`, `aap-instance-controller`, or `aap-instance-execution` — disable in controller (playbook)
-2. `aap-controller` / `aap-execution` — stop local units (manual, after jobs complete; both on hybrid)
+1. `aap-instance-*` — wait for controller API ping, then disable in controller
+2. Wait for jobs to finish
+3. `aap-controller` / `aap-execution` — stop local units (both on hybrid)
 
-When `aap_state=stopped` on gateway, hub, EDA, or dedicated Redis hosts, the playbook stops the component wrapper service only.
-
-On colocated hosts, component wrapper services stop in platform order (gateway → eda → execution → controller → hub → redis).
+Gateway, hub, EDA, and dedicated Redis: stop the component wrapper service. On colocated hosts, stop wrappers in platform order (gateway → eda → execution → controller → hub → redis).
 
 ## Start order
 
-When `aap_state=started` on mesh hosts:
+Mesh hosts:
 
 1. `aap-<node_type>` — start local units (reverse platform order on colocated hosts)
-2. `aap-instance-*` — enable in controller and wait until `node_state` is `ready`
+2. `aap-instance-*` — wait for `GET /api/controller/v2/ping/`, enable in controller, then wait until `node_state` is `ready`
 
-Gateway, hub, EDA, and dedicated Redis hosts only run the component wrapper service task.
+On reboot, enabled units start automatically in that dependency order. Gateway, hub, EDA, and dedicated Redis only start their component wrapper.
 
 ## Scripts
 
@@ -89,7 +86,7 @@ ExecStop=/usr/local/bin/aap-execution stop
 WantedBy=multi-user.target
 ```
 
-The script runs `systemctl --user` as `ansible_user` from inventory (e.g. `ec2-user`).
+The script runs `systemctl --user` as `ansible_user` from inventory (e.g. `ec2-user`). Component wrapper units (`aap-gateway`, `aap-redis`, …) use `After=`/`Requires=user@<uid>.service` so they do not start at boot before that user’s systemd manager is up (linger required). Mesh instance units `After=`/`Requires=` the local wrappers (`aap-controller` / `aap-execution`) so enable/ready does not run unless those services have started successfully.
 
 ## Limitations
 

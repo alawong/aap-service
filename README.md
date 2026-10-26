@@ -1,6 +1,6 @@
 # AAP Node Lifecycle Services
 
-Ansible role and playbooks that install system-level wrapper services for containerized AAP 2.6 nodes. Playbooks run as **root** (`become`). System unit files live in `/etc/systemd/system/`; scripts in `/usr/local/bin/`. Component wrapper service scripts run `systemctl --user` as `ansible_user` from inventory.
+Ansible role and playbooks that install system-level wrapper services for containerized AAP 2.6 nodes. Playbooks run as **root** (`become`). System unit files live in `/etc/systemd/system/`; scripts in `/usr/local/bin/`. Component wrapper service scripts run `systemctl --user` as `ansible_user` from inventory. Wrapper units wait for `user@<ansible_user uid>.service` at boot so the user manager is ready before `systemctl --user start`.
 
 A single host may run more than one AAP role (for example gateway and controller on the same server). The role installs one **component wrapper service** per node type on that host, derived from all matching installer inventory groups.
 
@@ -20,7 +20,7 @@ A single host may run more than one AAP role (for example gateway and controller
 | Redis           | `aap-redis.service`               | Start/stop centralized `redis-tcp` (`[redis]` hosts, or first gateway when `[redis]` is empty) |
 
 
-Mesh instance services (`aap-instance-*`) call the controller API only. Component wrapper services (`aap-gateway`, `aap-controller`, and so on) manage local Podman user units only.
+Mesh instance services (`aap-instance-*`) call the controller API only. Before enable/disable they wait for `GET /api/controller/v2/ping/` (retries on connection errors and HTTP 502/503/504). Component wrapper services (`aap-gateway`, `aap-controller`, and so on) manage local Podman user units only.
 
 ## Requirements
 
@@ -33,9 +33,9 @@ Mesh instance services (`aap-instance-*`) call the controller API only. Componen
 ## Limitations
 
 - `aap_node_types` lists every node type on a host from inventory group membership. Colocated hosts install multiple component wrapper services (for example `aap-gateway` and `aap-controller` on one server). Hybrid controller hosts (`receptor_type=hybrid`, the installer default) also get `aap-execution`; mesh uses a single `aap-instance-hybrid`.
-- `aap-instance-*` does not wait for running jobs to finish. On controller and execution hosts, drain with the playbook first, then stop `aap-controller` or `aap-execution` manually after jobs complete (both on hybrid).
+- `aap-instance-*` does not wait for running jobs to finish. On controller and execution hosts, stop the mesh instance service first, wait for jobs to finish, then stop `aap-controller` or `aap-execution` (both on hybrid).
 - Uninstall removes wrapper units and scripts only; it does not stop Podman containers or change mesh state.
-- On colocated hosts, a single `manage_aap_service.yml` run applies Red Hat platform order across every component wrapper service on that host (`aap_manage_order`: gateway → eda → execution → controller → hub → redis on stop; reverse on start). Mesh drain/start still runs before and after that loop when the host has a mesh instance service.
+- On colocated hosts, stop/start each `aap-*` unit in Red Hat platform order (gateway → eda → execution → controller → hub → redis on stop; reverse on start).
 - `receptor_type` is assumed stable for the life of a deployment. Changing it later (for example hybrid to control) may leave a stale `aap-instance-*` unit on disk until addressed manually or by a future role enhancement.
 
 
@@ -61,7 +61,9 @@ ansible-playbook -i inventory install_aap_service.yml -l exec1.example.com
 | `aap_instance_hostname`                          | `routable_hostname` or `inventory_hostname` | No         | Hostname of this instance in the controller mesh                        |
 | `aap_skip_units`                                 | `[]`                                        | No         | Skip container units (e.g. optional `redis-unix`)                       |
 | `aap_extra_start_units` / `aap_extra_stop_units` | `[]`                                        | No         | Extra units after/before profile lists                                  |
-| `aap_instance_ready_timeout_seconds`             | `600`                                       | No         | Wait for `node_state=ready` after mesh enable                           |
+| `aap_instance_api_ready_timeout_seconds`         | `120`                                       | No         | Wait for `GET /api/controller/v2/ping/` before mesh enable/disable      |
+| `aap_instance_api_ready_poll_seconds`            | `15`                                        | No         | Poll interval while waiting for controller API                          |
+| `aap_instance_ready_timeout_seconds`             | `300`                                       | No         | Wait for `node_state=ready` after mesh enable                           |
 | `aap_instance_ready_poll_seconds`                | `15`                                        | No         | Poll interval while waiting for ready                                   |
 | `aap_redis_failover_timeout_seconds`             | `60`                                        | No         | Wait for primary demotion after `CLUSTER FAILOVER`                      |
 | `aap_redis_failover_poll_seconds`                | `3`                                         | No         | Poll interval during Redis failover wait                                |
@@ -70,21 +72,6 @@ ansible-playbook -i inventory install_aap_service.yml -l exec1.example.com
 
 
 
-
-### Manage
-
-```bash
-ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l automationgateway
-ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l automationgateway
-```
-
-
-| Variable    | Required | Description            |
-| ----------- | -------- | ---------------------- |
-| `aap_state` | Yes      | `started` or `stopped` |
-
-
-On mesh hosts (`automationcontroller` and `execution_nodes`), `aap_state=stopped` runs mesh drain (`aap-instance-*`) only. Stop `aap-controller` or `aap-execution` manually after jobs finish. All other node types stop or start the component wrapper service directly. On colocated hosts, component wrapper services in `aap_node_types` follow `aap_manage_order` in the same playbook run.
 
 ### Uninstall
 
@@ -97,71 +84,37 @@ Removes wrapper units and scripts without running `ExecStop`. On Automation Mesh
 
 ## Maintenance
 
-Follow [Red Hat KCS 7124426](https://access.redhat.com/solutions/7124426) for platform-wide order. Run `manage_aap_service.yml` once per inventory group in the following order. On colocated hosts (multiple groups on one server), one playbook run per host applies the same order across all component wrapper services on that host.
-
+Follow [Red Hat KCS 7124426](https://access.redhat.com/solutions/7124426) for platform-wide stop/start order. Operate units with `systemctl` (wrappers are enabled at install and come back on reboot).
 
 | Step | Target                   | Wrapper / notes                                                                       |
 | ---- | ------------------------ | ------------------------------------------------------------------------------------- |
 | 1    | `automationgateway`      | `aap-gateway` — `redis-unix` last when present (skipped on first gateway in standalone) |
 | 2    | `automationeda`          | `aap-eda` — `redis-unix` last when present                                            |
-| 3    | `execution_nodes`        | `aap-instance-execution` (drain), then `sudo systemctl stop aap-execution.service`    |
-| 4    | `automationcontroller`   | `aap-instance-hybrid` or `aap-instance-controller` (drain), then `sudo systemctl stop aap-controller.service` (and `aap-execution` on hybrid) |
+| 3    | `execution_nodes`        | `aap-instance-execution` (drain), wait for jobs, then `aap-execution`                 |
+| 4    | `automationcontroller`   | `aap-instance-hybrid` or `aap-instance-controller` (drain), wait for jobs, then `aap-controller` (and `aap-execution` on hybrid) |
 | 5    | `automationhub`          | `aap-hub`                                                                             |
-| 6    | `redis`                  | `aap-redis` — `redis-tcp` only. For rolling OS patch use one host at a time (see below); `-l redis` stops the whole group |
-| 7    | Controller with local DB | Manual only: `sudo systemctl --user stop postgresql.service` (not managed by any `aap-*` wrapper) |
+| 6    | `redis`                  | `aap-redis` — `redis-tcp` only; rolling OS patch one host at a time (see below)       |
+| 7    | Controller with local DB | Manual only: `systemctl --user stop postgresql.service` (not managed by any `aap-*` wrapper) |
 
+Restart in reverse order (step 7 → 1): component wrappers first, then `aap-instance-*` on mesh hosts.
 
-Restart in reverse order (step 7 → 1). On mesh hosts, a single `aap_state=started` playbook run starts component wrapper services first (in reverse platform order), then `aap-instance-*` (mesh re-enable).
-
-**Full stack**
-
-```bash
-# Stop AAP services (1 to 7)
-ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l automationgateway
-ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l automationeda
-ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l execution_nodes
-
-# wait for automation jobs to complete running
-ansible -i inventory execution_nodes -b -a "systemctl stop aap-execution.service"
-ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l automationcontroller
-
-# wait for controller jobs to complete running
-ansible -i inventory automationcontroller -b -a "systemctl stop aap-controller.service"
-
-ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l automationhub
-# Full-stack only (apps already down): may stop all redis hosts together.
-# Prefer one host at a time if any redis traffic remains.
-ansible-playbook -i inventory manage_aap_service.yml -e aap_state=stopped -l redis
-# sudo systemctl --user stop postgresql.service  # if local DB
-
-# Perform maintenance
-ansible-playbook -i inventory maintain_aap.yml
-
-# Start AAP services up again (7 - 1)
-# sudo systemctl --user start postgresql.service  # if local DB
-ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l redis
-# Or start redis one host at a time to match a rolling stop
-ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l automationhub
-ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l automationcontroller
-ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l execution_nodes
-ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l automationeda
-ansible-playbook -i inventory manage_aap_service.yml -e aap_state=started -l automationgateway
-```
-
-**Manual Steps for an Execution Node**
+**Rolling patch (execution node)**
 
 ```bash
 sudo systemctl stop aap-instance-execution.service
 # wait for jobs to finish
 sudo systemctl stop aap-execution.service
 
-# perform maintenance
+# patch / reboot
 dnf upgrade
+# reboot — enabled units start automatically (instance after local wrappers + API ping)
 
-#restart AAP services
+# if not rebooting:
 sudo systemctl start aap-execution.service
 sudo systemctl start aap-instance-execution.service
 ```
+
+Controller / hybrid hosts are the same pattern with `aap-instance-hybrid` or `aap-instance-controller`, then `aap-controller` (and `aap-execution` on hybrid).
 
 
 
@@ -247,7 +200,7 @@ Failover/ready waits use role defaults: `aap_redis_failover_timeout_seconds` (60
 1. Stop / patch / start each **replica** first (`systemctl stop aap-redis` on that host only).
 2. Confirm the replica is back (`active`, cluster connected, `ROLE` slave) before the next host.
 3. Then stop / patch / start each **primary** the same way. Preflight requires its replica to be connected and reachable; otherwise stop refuses and leaves `redis-tcp` running.
-4. Do not run `manage_aap_service.yml -l redis` for rolling patch — that targets the whole `[redis]` group and can stop multiple nodes together.
+4. Do not stop the whole `[redis]` group at once for rolling patch — work one host at a time.
 
 ```bash
 ansible -i inventory <redis-host> -b -a "systemctl stop aap-redis"
@@ -285,7 +238,6 @@ Rotate: update the `aap_token` variable within `install_aap_service.yml` and re-
 
 ```
 install_aap_service.yml
-manage_aap_service.yml
 uninstall_aap_service.yml
 roles/
   aap_service/

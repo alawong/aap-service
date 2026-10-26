@@ -24,6 +24,25 @@
       Set aap_hostname in inventory (gateway URL for the controller API).
       https:// is added automatically if omitted.
 
+- name: Set aap-instance After=/Requires= units for hybrid nodes
+  ansible.builtin.set_fact:
+    aap_instance_after_units:
+      - aap-controller.service
+      - aap-execution.service
+  when: aap_mesh_instance_type == 'hybrid'
+
+- name: Set aap-instance After=/Requires= units for controller nodes
+  ansible.builtin.set_fact:
+    aap_instance_after_units:
+      - aap-controller.service
+  when: aap_mesh_instance_type == 'controller'
+
+- name: Set aap-instance After=/Requires= units for execution nodes
+  ansible.builtin.set_fact:
+    aap_instance_after_units:
+      - aap-execution.service
+  when: aap_mesh_instance_type == 'execution'
+
 - name: Ensure systemd-creds is installed
   ansible.builtin.package:
     name: systemd

@@ -1,7 +1,8 @@
 # Reference system unit - deployed to /etc/systemd/system/aap-eda.service
 [Unit]
 Description=AAP EDA local lifecycle (container systemd units)
-After=network-online.target
+After=network-online.target user@UID.service
+Requires=user@UID.service
 Wants=network-online.target
 
 [Service]
@@ -9,6 +10,7 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/bin/aap-eda start
 ExecStop=/usr/local/bin/aap-eda stop
+TimeoutStartSec=300
 TimeoutStopSec=600
 
 [Install]

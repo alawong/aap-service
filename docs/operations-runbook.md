@@ -1,8 +1,8 @@
 # Operations runbook
 
-Full-stack stop/start order for containerized deployments follows Red Hat [KCS 7124426](https://access.redhat.com/solutions/7124426). See [README - Maintenance](../README.md#maintenance) for playbook workflows.
+Full-stack stop/start order for containerized deployments follows Red Hat [KCS 7124426](https://access.redhat.com/solutions/7124426). See [README - Maintenance](../README.md#maintenance).
 
-When multiple AAP roles share one server, a single `manage_aap_service.yml` run on that host stops or starts every component wrapper service in platform order. Mesh drain/start runs once when the host has an `aap-instance-*` mesh instance service.
+On colocated hosts, stop or start each `aap-*` wrapper in platform order. Mesh drain/start is a separate `aap-instance-*` unit.
 
 ## Install
 
@@ -15,15 +15,8 @@ Runs as root via Ansible `become`. Requires systemd user lingering for the AAP i
 ## Drain only (keep receptor running)
 
 ```bash
-ansible-playbook -i inventory manage_aap_service.yml \
-  -e aap_state=stopped \
-  -l exec1.example.com
-```
-
-On a single node:
-
-```bash
 sudo systemctl stop aap-instance-execution.service
+# or aap-instance-hybrid / aap-instance-controller
 ```
 
 ## Stop local services only
@@ -34,15 +27,7 @@ After drain and once jobs have finished:
 sudo systemctl stop aap-execution.service   # or aap-controller
 ```
 
-Gateway, hub, or EDA via Ansible:
-
-```bash
-ansible-playbook -i inventory manage_aap_service.yml \
-  -e aap_state=stopped \
-  -l gateway1.example.com
-```
-
-Or on the node:
+Gateway, hub, or EDA:
 
 ```bash
 sudo systemctl stop aap-gateway.service   # or aap-eda or aap-hub
@@ -51,19 +36,17 @@ sudo systemctl stop aap-gateway.service   # or aap-eda or aap-hub
 ## Full maintenance stop (execution / controller)
 
 ```bash
-ansible-playbook -i inventory manage_aap_service.yml \
-  -e aap_state=stopped \
-  -l exec1.example.com
-
+sudo systemctl stop aap-instance-execution.service
+# wait for jobs to finish
 sudo systemctl stop aap-execution.service
+# patch / reboot — enabled units return on boot
 ```
 
-## Return to service
+## Return to service (no reboot)
 
 ```bash
-ansible-playbook -i inventory manage_aap_service.yml \
-  -e aap_state=started \
-  -l exec1.example.com
+sudo systemctl start aap-execution.service
+sudo systemctl start aap-instance-execution.service
 ```
 
 ## Rolling Redis OS patch
@@ -76,7 +59,7 @@ ansible -i inventory <redis-host> -b -a "systemctl stop aap-redis"
 ansible -i inventory <redis-host> -b -a "systemctl start aap-redis"
 ```
 
-On primary stop, `aap-redis` failovers only if a connected replica answers `PING`; otherwise stop fails and `redis-tcp` stays up. Do not use `-l redis` for rolling work (that can stop the whole group). Details: [README — aap-redis](../README.md).
+On primary stop, `aap-redis` failovers only if a connected replica answers `PING`; otherwise stop fails and `redis-tcp` stays up. Do not stop the whole `[redis]` group at once for rolling work. Details: [README — aap-redis](../README.md).
 
 Local DB (`postgresql`) is never started/stopped by wrappers — do that manually when needed.
 

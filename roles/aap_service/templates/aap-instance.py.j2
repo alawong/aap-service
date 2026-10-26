@@ -4,6 +4,8 @@
   'service': 'aap-instance-' + aap_node_type,
   'instance_hostname': aap_instance_hostname,
   'hostname': aap_hostname,
+  'api_ready_timeout_seconds': aap_instance_api_ready_timeout_seconds,
+  'api_ready_poll_seconds': aap_instance_api_ready_poll_seconds,
   'ready_timeout_seconds': aap_instance_ready_timeout_seconds,
   'ready_poll_seconds': aap_instance_ready_poll_seconds,
 } %}
@@ -26,6 +28,10 @@ INSTANCE_HOSTNAME = _CONFIG["instance_hostname"]
 AAP_HOSTNAME = _CONFIG["hostname"]
 ENCRYPTED_CREDENTIAL_PATH = "/etc/credstore.encrypted/aap_token"
 VALIDATE_CERTS = {{ 'True' if aap_validate_certs | bool else 'False' }}
+API_READY_TIMEOUT = _CONFIG["api_ready_timeout_seconds"]
+API_READY_POLL = _CONFIG["api_ready_poll_seconds"]
+API_PING_PATH = "/api/controller/v2/ping/"
+RETRYABLE_HTTP = (502, 503, 504)
 READY_TIMEOUT = _CONFIG["ready_timeout_seconds"]
 READY_POLL = _CONFIG["ready_poll_seconds"]
 READY_NODE_STATE = "ready"
@@ -81,19 +87,25 @@ def read_token():
     )
 
 
-def api_request(method, path, body=None):
-    url = AAP_HOSTNAME.rstrip("/") + path
-    headers = {
+def _ssl_context():
+    return None if VALIDATE_CERTS else ssl._create_unverified_context()
+
+
+def _api_headers():
+    return {
         "Accept": "application/json",
         "Content-Type": "application/json",
         "Authorization": "Bearer " + read_token(),
     }
+
+
+def api_request(method, path, body=None):
+    url = AAP_HOSTNAME.rstrip("/") + path
     data = json.dumps(body).encode("utf-8") if body is not None else None
-    request = urllib.request.Request(url, data=data, headers=headers, method=method)
-    context = None if VALIDATE_CERTS else ssl._create_unverified_context()
+    request = urllib.request.Request(url, data=data, headers=_api_headers(), method=method)
 
     try:
-        with urllib.request.urlopen(request, context=context, timeout=60) as response:
+        with urllib.request.urlopen(request, context=_ssl_context(), timeout=60) as response:
             payload = response.read().decode("utf-8")
             return json.loads(payload) if payload else {}
     except urllib.error.HTTPError as exc:
@@ -106,6 +118,57 @@ def api_request(method, path, body=None):
             "and that this node can reach the gateway (port, TLS, security groups)."
             % (url, exc.reason)
         ) from exc
+
+
+def probe_api_ping():
+    """Return None when controller API is reachable; otherwise a short retry reason."""
+    url = AAP_HOSTNAME.rstrip("/") + API_PING_PATH
+    request = urllib.request.Request(url, headers=_api_headers(), method="GET")
+
+    try:
+        with urllib.request.urlopen(request, context=_ssl_context(), timeout=15) as response:
+            response.read()
+            return None
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        if exc.code in RETRYABLE_HTTP:
+            return "HTTP %s%s" % (exc.code, (": " + detail[:120]) if detail else "")
+        raise RuntimeError(
+            "GET %s failed (%s): %s" % (API_PING_PATH, exc.code, detail or "HTTP error")
+        ) from exc
+    except urllib.error.URLError as exc:
+        return str(exc.reason)
+    except TimeoutError:
+        return "timeout"
+
+
+def wait_for_api_ready():
+    deadline = time.time() + API_READY_TIMEOUT
+    last_reason = "not attempted"
+
+    while time.time() < deadline:
+        reason = probe_api_ping()
+        if reason is None:
+            LOG.info(
+                "Controller API ready (%s%s)",
+                AAP_HOSTNAME.rstrip("/"),
+                API_PING_PATH,
+            )
+            return
+        last_reason = reason
+        LOG.info("Waiting for controller API (%s): %s", API_PING_PATH, reason)
+        time.sleep(API_READY_POLL)
+
+    raise RuntimeError(
+        "Timed out after %ss waiting for GET %s%s (%s). "
+        "Check that the gateway and controller are up and reachable from this host."
+        % (
+            API_READY_TIMEOUT,
+            AAP_HOSTNAME.rstrip("/"),
+            API_PING_PATH,
+            last_reason,
+        )
+    )
 
 
 def instance_state():
@@ -166,6 +229,7 @@ def wait_for_instance_ready():
 
 
 def set_instance_enabled(enabled):
+    wait_for_api_ready()
     state = instance_state()
 
     if state["enabled"] != enabled:

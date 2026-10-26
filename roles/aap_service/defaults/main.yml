@@ -3,7 +3,9 @@ aap_instance_hostname: "{{ routable_hostname | default(inventory_hostname) }}"
 aap_hostname: "{{ gateway_main_url }}"
 aap_validate_certs: true
 
-aap_instance_ready_timeout_seconds: 600
+aap_instance_api_ready_timeout_seconds: 120
+aap_instance_api_ready_poll_seconds: 15
+aap_instance_ready_timeout_seconds: 300
 aap_instance_ready_poll_seconds: 15
 
 aap_mesh_node_types:
@@ -56,15 +58,6 @@ aap_mesh_instance_type: >-
       )
     )
   }}
-
-# Red Hat platform stop order (KCS 7124426); start uses reverse.
-aap_manage_order:
-  - gateway
-  - eda
-  - execution
-  - controller
-  - hub
-  - redis
 
 aap_services:
   gateway:

@@ -1,0 +1,19 @@
+# Reference system unit - deployed to /etc/systemd/system/aap-instance-hybrid.service
+[Unit]
+Description=AAP instance enable/disable (mesh, hybrid)
+After=network-online.target aap-controller.service aap-execution.service
+Requires=aap-controller.service aap-execution.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+LoadCredentialEncrypted=aap_token:/etc/credstore.encrypted/aap_token
+PrivateMounts=yes
+ExecStart=/usr/local/bin/aap-instance-hybrid start
+ExecStop=/usr/local/bin/aap-instance-hybrid stop
+TimeoutStartSec=480
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target
