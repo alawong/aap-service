@@ -1,3 +1,4 @@
+#jinja2: trim_blocks: False
 [Unit]
 Description=AAP {{ aap_node_type }} local lifecycle (container systemd units)
 After=network-online.target user@{{ aap_user_uid }}.service

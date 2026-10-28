@@ -35,7 +35,7 @@ RETRYABLE_HTTP = (502, 503, 504)
 READY_TIMEOUT = _CONFIG["ready_timeout_seconds"]
 READY_POLL = _CONFIG["ready_poll_seconds"]
 READY_NODE_STATE = "ready"
-FAIL_NODE_STATES = ("unavailable", "provision-fail", "deprovision-fail")
+FAIL_NODE_STATES = ("provision-fail", "deprovision-fail")
 LOG = logging.getLogger(SERVICE_NAME)
 VALID_ACTIONS = ("start", "stop")
 

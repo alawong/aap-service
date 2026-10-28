@@ -1,7 +1,8 @@
+#jinja2: trim_blocks: False
 [Unit]
 Description=AAP instance enable/disable (mesh, {{ aap_node_type }})
-After=network-online.target{% for unit in aap_instance_after_units %} {{ unit }}{% endfor %}
-{% if aap_instance_after_units | length > 0 %}
+After=network-online.target{{ (' ' + (aap_instance_after_units | join(' '))) if aap_instance_after_units else '' }}
+{% if aap_instance_after_units %}
 Requires={{ aap_instance_after_units | join(' ') }}
 {% endif %}
 Wants=network-online.target
