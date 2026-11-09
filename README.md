@@ -20,7 +20,7 @@ A single host may run more than one AAP role (for example gateway and controller
 | Redis           | `aap-redis.service`               | Start/stop centralized `redis-tcp` (`[redis]` hosts, or first gateway when `[redis]` is empty) |
 
 
-Mesh instance services (`aap-instance-*`) call the controller API only. Before enable/disable they wait for `GET /api/controller/v2/ping/` (retries on connection errors and HTTP 502/503/504). Component wrapper services (`aap-gateway`, `aap-controller`, and so on) manage local Podman user units only.
+Mesh instance services (`aap-instance-*`) call the controller API only. Mesh API calls retry connection errors and HTTP 500/502/503/504 until `aap_instance_api_ready_timeout_seconds`. Component wrapper services (`aap-gateway`, `aap-controller`, and so on) manage local Podman user units only.
 
 ## Requirements
 
@@ -61,7 +61,7 @@ ansible-playbook -i inventory install_aap_service.yml -l exec1.example.com
 | `aap_instance_hostname`                          | `routable_hostname` or `inventory_hostname` | No         | Hostname of this instance in the controller mesh                        |
 | `aap_skip_units`                                 | `[]`                                        | No         | Skip container units (e.g. optional `redis-unix`)                       |
 | `aap_extra_start_units` / `aap_extra_stop_units` | `[]`                                        | No         | Extra units after/before profile lists                                  |
-| `aap_instance_api_ready_timeout_seconds`         | `120`                                       | No         | Wait for `GET /api/controller/v2/ping/` before mesh enable/disable      |
+| `aap_instance_api_ready_timeout_seconds`         | `300`                                       | No         | Retry budget per mesh API call (connection errors, HTTP 500/502/503/504) |
 | `aap_instance_api_ready_poll_seconds`            | `15`                                        | No         | Poll interval while waiting for controller API                          |
 | `aap_instance_ready_timeout_seconds`             | `300`                                       | No         | Wait for `node_state=ready` after mesh enable                           |
 | `aap_instance_ready_poll_seconds`                | `15`                                        | No         | Poll interval while waiting for ready                                   |
@@ -107,7 +107,7 @@ sudo systemctl stop aap-execution.service
 
 # patch / reboot
 dnf upgrade
-# reboot — enabled units start automatically (instance after local wrappers + API ping)
+# reboot — enabled units start automatically (instance after local wrappers)
 
 # if not rebooting:
 sudo systemctl start aap-execution.service

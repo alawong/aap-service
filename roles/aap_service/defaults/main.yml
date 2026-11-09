@@ -3,7 +3,7 @@ aap_instance_hostname: "{{ routable_hostname | default(inventory_hostname) }}"
 aap_hostname: "{{ gateway_main_url }}"
 aap_validate_certs: true
 
-aap_instance_api_ready_timeout_seconds: 120
+aap_instance_api_ready_timeout_seconds: 300
 aap_instance_api_ready_poll_seconds: 15
 aap_instance_ready_timeout_seconds: 300
 aap_instance_ready_poll_seconds: 15

@@ -12,8 +12,8 @@ LoadCredentialEncrypted=aap_token:/etc/credstore.encrypted/aap_token
 PrivateMounts=yes
 ExecStart=/usr/local/bin/aap-instance-hybrid start
 ExecStop=/usr/local/bin/aap-instance-hybrid stop
-TimeoutStartSec=480
-TimeoutStopSec=180
+TimeoutStartSec=660
+TimeoutStopSec=360
 
 [Install]
 WantedBy=multi-user.target

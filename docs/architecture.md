@@ -49,7 +49,7 @@ Inventory validation fails if a host is in both `automationcontroller` and `exec
 
 Mesh hosts (`automationcontroller` / `execution_nodes`):
 
-1. `aap-instance-*` — wait for controller API ping, then disable in controller
+1. `aap-instance-*` — disable in controller (API calls retry on 500/502/503/504)
 2. Wait for jobs to finish
 3. `aap-controller` / `aap-execution` — stop local units (both on hybrid)
 
@@ -60,7 +60,7 @@ Gateway, hub, EDA, and dedicated Redis: stop the component wrapper service. On c
 Mesh hosts:
 
 1. `aap-<node_type>` — start local units (reverse platform order on colocated hosts)
-2. `aap-instance-*` — wait for `GET /api/controller/v2/ping/`, enable in controller, then wait until `node_state` is `ready`
+2. `aap-instance-*` — enable in controller (API calls retry on 500/502/503/504), then wait until `node_state` is `ready`
 
 On reboot, enabled units start automatically in that dependency order. Gateway, hub, EDA, and dedicated Redis only start their component wrapper.
 
